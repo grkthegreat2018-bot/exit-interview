@@ -174,21 +174,24 @@ void Game::DrawTitle() {
 
     if (menuPage == 1) { DrawSettings(); return; }
 
-    // main menu - click or keyboard shortcuts
+    // main menu - click or keyboard shortcuts (suppressed while the update
+    // popup is modal so clicks can't pass through the veil)
     const float bw = 380.f, bh = 52.f, gap = 13.f;
     Rectangle r{W / 2.f - bw / 2, H * 0.50f, bw, bh};
-    if (MenuBtn(r, "BEGIN THE NIGHT SHIFT", "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
-    r.y += bh + gap;
-    if (saveExists) {
-        if (MenuBtn(r, "CONTINUE FROM SAVE", "Resume the shift exactly where you left it.")) {
-            if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); }
-            return;
-        }
+    if (!updOpen) {
+        if (MenuBtn(r, "BEGIN THE NIGHT SHIFT", "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
         r.y += bh + gap;
+        if (saveExists) {
+            if (MenuBtn(r, "CONTINUE FROM SAVE", "Resume the shift exactly where you left it.")) {
+                if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); }
+                return;
+            }
+            r.y += bh + gap;
+        }
+        if (MenuBtn(r, "SETTINGS", "Audio, controls, LLM and general options.")) { menuPage = 1; settingsTab = 0; return; }
+        r.y += bh + gap;
+        if (MenuBtn(r, "QUIT", "Exit to desktop.")) { quit = true; return; }
     }
-    if (MenuBtn(r, "SETTINGS", "Audio, controls, LLM and general options.")) { menuPage = 1; settingsTab = 0; return; }
-    r.y += bh + gap;
-    if (MenuBtn(r, "QUIT", "Exit to desktop.")) { quit = true; return; }
 
     std::string warn = (llm.ProviderName() == "groq" && apiKey.empty())
         ? "no API key set - replies run on the offline stub (SETTINGS > LLM)"
@@ -203,17 +206,155 @@ void Game::DrawTitle() {
     ts = MeasureTextEx(A.fontSmall, ctrl.c_str(), 17, 1);
     DrawTextEx(A.fontSmall, ctrl.c_str(), {W / 2.f - ts.x / 2, H - 32.f}, 17, 1, Color{110, 115, 125, 255});
 
-    // credits block, bottom-right: makers + year/version + repo link
+    // credits block, bottom-right: makers + AI disclaimer + year/version +
+    // repo link
     {
         std::string cr = JS(Cfg()["game"], "credits",
                             "Made by GRKTheGreat & Devin Desktop - 2026 - v1.0.0");
+        std::string disc = JS(Cfg()["game"], "ai_disclaimer",
+                              "made with AI assistance");
         std::string repo = JS(Cfg()["game"], "repo_url", "github.com/GRKTheGreat/exit-interview");
         ts = MeasureTextEx(A.fontSmall, cr.c_str(), 16, 1);
-        DrawTextEx(A.fontSmall, cr.c_str(), {W - ts.x - 16.f, H - 58.f}, 16, 1, Color{120, 125, 135, 255});
+        DrawTextEx(A.fontSmall, cr.c_str(), {W - ts.x - 16.f, H - 78.f}, 16, 1, Color{120, 125, 135, 255});
+        ts = MeasureTextEx(A.fontSmall, disc.c_str(), 16, 1);
+        DrawTextEx(A.fontSmall, disc.c_str(), {W - ts.x - 16.f, H - 58.f}, 16, 1, Color{105, 110, 118, 255});
         ts = MeasureTextEx(A.fontSmall, repo.c_str(), 16, 1);
         DrawTextEx(A.fontSmall, repo.c_str(), {W - ts.x - 16.f, H - 38.f}, 16, 1, Color{96, 140, 180, 255});
     }
+    // updater: auto-open once when a release appears; a corner pill re-opens
+    // it after LATER; the popup itself is modal over the whole menu
+    if (updater) {
+        auto us = updater->GetState();
+        if (!updSeen && (us == GameUpdater::State::Available ||
+                         us == GameUpdater::State::Applied)) {
+            updOpen = 1; updSeen = true;
+        }
+        if (updOpen) {
+            DrawUpdatePopup();
+        } else if (us == GameUpdater::State::Available ||
+                   us == GameUpdater::State::Downloading ||
+                   us == GameUpdater::State::Ready) {
+            std::string pill = "UPDATE " + updater->NewVersion() +
+                (us == GameUpdater::State::Ready ? " - READY" :
+                 us == GameUpdater::State::Downloading ? " - downloading" : " AVAILABLE");
+            Vector2 ps = MeasureTextEx(A.fontSmall, pill.c_str(), 17, 1);
+            Rectangle pr{W - ps.x - 40.f, 16.f, ps.x + 24.f, 36.f};
+            if (MenuBtn(pr, pill.c_str(), "A new release is out on github - view the changelog."))
+                updOpen = 1;
+        }
+    }
     if (!tip.empty()) DrawTooltipBar(W / 2.f - 300.f, r.y + bh + 18.f, 600.f);
+}
+
+
+// modal update card on the title screen: version delta, scrollable
+// changelog, and per-state actions (download -> restart & apply)
+void Game::DrawUpdatePopup() {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    auto us = updater->GetState();
+    DrawRectangle(0, 0, W, H, Color{0, 0, 0, 170});
+    Rectangle card{W / 2.f - 380.f, H / 2.f - 250.f, 760.f, 500.f};
+    DrawRectangleRounded({card.x + 6.f, card.y + 8.f, card.width, card.height},
+                         0.045f, 8, Color{0, 0, 0, 130});
+    DrawRectangleRounded(card, 0.045f, 8, Color{22, 26, 34, 248});
+    DrawRectangleRoundedLinesEx(card, 0.045f, 8, 1.5f, Color{96, 120, 150, 220});
+    const char* head =
+        us == GameUpdater::State::Available   ? "UPDATE AVAILABLE" :
+        us == GameUpdater::State::Downloading ? "DOWNLOADING UPDATE" :
+        us == GameUpdater::State::Ready       ? "UPDATE READY TO INSTALL" :
+        us == GameUpdater::State::Applying    ? "APPLYING UPDATE" :
+        us == GameUpdater::State::Applied     ? "UPDATE APPLIED" :
+        us == GameUpdater::State::Error       ? "UPDATE FAILED" :
+                                              "CHECKING FOR UPDATES";
+    DrawTextEx(A.font, head, {card.x + 28.f, card.y + 22.f}, 30, 1, Color{220, 215, 205, 255});
+    std::string vline;
+    if (us == GameUpdater::State::Applied)
+        vline = "now running " + updater->NewVersion();
+    else if (us != GameUpdater::State::Error)
+        vline = "v" + updater->CurrentVersion() + "   ->   " + updater->NewVersion();
+    DrawTextEx(A.fontSmall, vline.c_str(), {card.x + 30.f, card.y + 58.f}, 19, 1,
+               Color{190, 160, 100, 255});
+    std::string note = "save files, settings and your key are never touched - " \
+                       "only files that changed are replaced";
+    DrawTextEx(A.fontSmall, note.c_str(), {card.x + 30.f, card.y + 80.f}, 16, 1,
+               Color{110, 118, 130, 255});
+
+    // scrollable changelog
+    Rectangle log{card.x + 28.f, card.y + 104.f, card.width - 56.f, card.height - 104.f - 96.f};
+    DrawRectangleRounded(log, 0.06f, 6, Color{12, 14, 18, 255});
+    std::string body = updater->Changelog();
+    if (body.empty()) body = us == GameUpdater::State::Error ? updater->Error()
+                             : "(no changelog in the release notes)";
+    // WrapText collapses \n - wrap each changelog line separately so bullets
+    // keep their shape
+    std::vector<std::string> lines;
+    {
+        std::string raw = body; size_t lp = 0;
+        while (lp <= raw.size()) {
+            size_t nl = raw.find('\n', lp);
+            std::string one = raw.substr(lp, nl == std::string::npos ? nl : nl - lp);
+            lp = (nl == std::string::npos) ? raw.size() + 1 : nl + 1;
+            while (!one.empty() && (one.back() == '\r' || one.back() == ' ')) one.pop_back();
+            if (one.empty()) { lines.push_back(""); continue; }
+            auto wl = WrapText(A.fontSmall, one, 17, 1, log.width - 28.f);
+            lines.insert(lines.end(), wl.begin(), wl.end());
+        }
+    }
+    float logH = lines.size() * 22.f + 20.f;
+    float maxScroll = std::max(0.f, logH - log.height);
+    if (CheckCollisionPointRec(GetMousePosition(), log))
+        updScroll = std::clamp(updScroll - GetMouseWheelMove() * 30.f, 0.f, maxScroll);
+    BeginScissorMode((int)log.x, (int)log.y, (int)log.width, (int)log.height);
+    float ly = log.y + 10.f - updScroll;
+    for (auto& s : lines) {
+        DrawTextEx(A.fontSmall, s.c_str(), {log.x + 14.f, ly}, 17, 1, Color{168, 176, 188, 255});
+        ly += 22.f;
+    }
+    EndScissorMode();
+    if (maxScroll > 0.f) {   // scrollbar thumb
+        float th = std::max(24.f, log.height * log.height / logH);
+        float ty = log.y + (log.height - th) * (updScroll / maxScroll);
+        DrawRectangleRounded({log.x + log.width - 8.f, ty, 5.f, th}, 0.5f, 4,
+                             Color{90, 100, 118, 200});
+    }
+
+    // footer actions per state
+    float by = card.y + card.height - 68.f;
+    auto Btn = [&](float bx, float bw, const char* label, const char* tt) {
+        return MenuBtn({bx, by, bw, 44.f}, label, tt);
+    };
+    if (us == GameUpdater::State::Available) {
+        if (Btn(card.x + 28.f, 300.f, "DOWNLOAD UPDATE", "Fetch the new build from github now."))
+            updater->BeginDownload();
+        if (Btn(card.x + card.width - 148.f, 120.f, "LATER", "Back to the menu - the badge stays in the corner."))
+            updOpen = 0;
+    } else if (us == GameUpdater::State::Downloading) {
+        float p = updater->Progress();
+        Rectangle pb{card.x + 28.f, by + 8.f, card.width - 56.f, 26.f};
+        DrawRectangleRounded(pb, 0.4f, 6, Color{34, 38, 48, 255});
+        DrawRectangleRounded({pb.x, pb.y, pb.width * p, pb.height}, 0.4f, 6,
+                             Color{120, 140, 170, 255});
+        char pb2[32]; snprintf(pb2, 32, "%d%%", (int)(p * 100.f + 0.5f));
+        Vector2 ts2 = MeasureTextEx(A.fontSmall, pb2, 17, 1);
+        DrawTextEx(A.fontSmall, pb2, {pb.x + pb.width / 2 - ts2.x / 2, pb.y + 4.f}, 17, 1, WHITE);
+        if (Btn(card.x + card.width - 148.f, 120.f, "LATER", "Keep downloading in the background."))
+            updOpen = 0;
+    } else if (us == GameUpdater::State::Ready) {
+        if (Btn(card.x + 28.f, 300.f, "RESTART & APPLY", "Close, patch the install, and relaunch automatically.")) {
+            if (updater->ApplyAndRelaunch()) { quit = true; return; }
+        }
+        if (Btn(card.x + card.width - 148.f, 120.f, "LATER", "Apply on a later launch instead."))
+            updOpen = 0;
+    } else if (us == GameUpdater::State::Applying) {
+        DrawTextEx(A.font, "closing to patch - the game will relaunch itself",
+                   {card.x + 28.f, by + 8.f}, 21, 1, Color{160, 170, 180, 255});
+    } else if (us == GameUpdater::State::Applied) {
+        if (Btn(card.x + card.width - 148.f, 120.f, "OK", "Back to the menu."))
+            updOpen = 0;
+    } else if (us == GameUpdater::State::Error) {
+        if (Btn(card.x + card.width - 148.f, 120.f, "CLOSE", "Back to the menu."))
+            updOpen = 0;
+    }
 }
 
 

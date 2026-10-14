@@ -3,6 +3,7 @@ name: build
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -49,14 +50,17 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
-      # smoke check: Linux binary must at least link and start far enough to
-      # print a banner/usage - a missing .so fails here instead of on a user
+      # smoke check: Linux binary must at least link - a missing .so fails
+      # here instead of on a user's machine
       - name: Smoke check (linux)
         if: runner.os == 'Linux'
         run: |
           ldd build/exit_interview | grep "not found" && exit 1 || true
           file build/exit_interview
 
+      # On tag builds the packaged config.json is stamped with the tag so the
+      # in-game updater's version compare lines up with the release it came
+      # from. Branch builds keep whatever assets/config.json says.
       - name: Package win64
         if: runner.os == 'Windows'
         shell: pwsh
@@ -66,18 +70,88 @@ jobs:
           Copy-Item build/Release/exit_interview.exe $out/
           Copy-Item build/Release/*.dll $out/ -ErrorAction SilentlyContinue
           Copy-Item -Recurse build/Release/assets $out/
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = "${{ github.ref_name }}".TrimStart('v')
+            $cfg = Get-Content "$out/assets/config.json" -Raw | ConvertFrom-Json
+            $cfg.game.version = $ver
+            $cfg | ConvertTo-Json -Depth 32 | Set-Content "$out/assets/config.json" -Encoding utf8
+          }
+          # manifest.json drives the updater's hash-diff + stale-file removal
+          $files = @(Get-ChildItem -Recurse -File $out | Where-Object { $_.Name -ne 'manifest.json' })
+          $base = (Resolve-Path $out).Path
+          $entries = @($files | ForEach-Object {
+            $rel = $_.FullName.Substring($base.Length + 1).Replace('\','/')
+            [pscustomobject]@{ path = $rel
+              sha256 = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() }
+          })
+          @{ files = $entries } | ConvertTo-Json -Depth 4 -Compress |
+            Set-Content "$out/manifest.json" -Encoding utf8
           Compress-Archive -Path "$out/*" -DestinationPath "dist/exit-interview-win64.zip" -Force
 
       - name: Package linux64
         if: runner.os == 'Linux'
         run: |
-          mkdir -p dist/exit-interview-linux64
-          cp build/exit_interview dist/exit-interview-linux64/
-          cp -r build/assets dist/exit-interview-linux64/
-          cd dist && tar czf exit-interview-linux64.tar.gz exit-interview-linux64
+          out=dist/exit-interview-linux64
+          mkdir -p "$out"
+          cp build/exit_interview "$out/"
+          cp -r build/assets "$out/"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            ver="${GITHUB_REF_NAME#v}"
+            python3 - "$out/assets/config.json" "$ver" <<'PY'
+          import json, sys
+          p, ver = sys.argv[1], sys.argv[2]
+          j = json.load(open(p))
+          j.setdefault("game", {})["version"] = ver
+          json.dump(j, open(p, "w"), indent=2)
+          PY
+          fi
+          # manifest.json drives the updater's hash-diff + stale-file removal.
+          # tar stores files at the archive ROOT (cd $out; tar .) so the apply
+          # script finds manifest.json at _update/stage/manifest.json
+          python3 - <<'PY'
+          import json, hashlib, os
+          os.chdir("dist/exit-interview-linux64")
+          fs = []
+          for dp, _, fns in os.walk("."):
+              for fn in fns:
+                  rel = os.path.relpath(os.path.join(dp, fn), ".").replace(os.sep, "/")
+                  if rel == "manifest.json":
+                      continue
+                  with open(rel, "rb") as fh:
+                      fs.append({"path": rel, "sha256": hashlib.sha256(fh.read()).hexdigest()})
+          json.dump({"files": sorted(fs, key=lambda f: f["path"])},
+                    open("manifest.json", "w"), indent=2)
+          PY
+          cd "$out" && tar czf ../exit-interview-linux64.tar.gz .
 
       - uses: actions/upload-artifact@v4
         with:
           name: exit-interview-${{ matrix.name }}
           path: dist/exit-interview-${{ matrix.name }}.*
           if-no-files-found: error
+
+  # tag push (v*) -> draft-free GitHub Release carrying both packages; the
+  # updater matches assets by the win64.zip / linux64.tar.gz suffix and reads
+  # the release body as its popup changelog
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: exit-interview-*
+          merge-multiple: true
+          path: rel
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd rel
+          ls -la
+          gh release create "$GITHUB_REF_NAME" \
+            --title "EXIT INTERVIEW $GITHUB_REF_NAME" \
+            --generate-notes \
+            exit-interview-win64.zip exit-interview-linux64.tar.gz

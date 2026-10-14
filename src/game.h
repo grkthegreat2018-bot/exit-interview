@@ -10,6 +10,7 @@
 #include "fakeos.h"
 #include "dialogui.h"
 #include "fx.h"
+#include "update.h"
 
 enum class Mode { Title, Roam, SitVisitor, SitComputer, Unseating, Pause, Dead, Win, Jumpscare };
 
@@ -219,6 +220,24 @@ private:
     };
     std::vector<DbgNpc> dbgNpcs;
     void DrawDbgNpcs() const;
+
+    // scripted camera path (EI_PATH env): smoothstep-lerped keyframes the
+    // flycam rides for trailer recording; HUD suppressed while active
+    struct PathKey { float t, x, y, z, yaw, pitch; };
+    std::vector<PathKey> pathKeys;
+    float pathT0 = 0.f, pathEnd = -1.f;
+    float recDumpFps = 0.f, recTime = 0.f;  // EI_RECDUMP: fixed-step dump clock
+    bool cleanDebug = false;   // EI_CLEAN / auto under EI_RECDUMP: flycam on, debug chrome off
+    int recFrame = 0;
+
+    // github release auto-updater (src/update.h) - check runs once on title
+    std::unique_ptr<class GameUpdater> updater;
+    std::string gameVersion{"1.0.0"};
+    std::string repoUrl;
+    int updOpen = 0;          // update popup visible on title
+    bool updSeen = false;     // auto-opened once already this boot
+    float updScroll = 0.f;    // changelog scroll offset
+    void DrawUpdatePopup();
 
     // crew dispatch - workers/guards physically walk in and fix anomalies
     enum CrewProp { PROP_NONE = 0, PROP_LADDER, PROP_BOX, PROP_TOOLBOX };

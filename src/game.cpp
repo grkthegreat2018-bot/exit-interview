@@ -115,6 +115,37 @@ bool Game::Init() {
     dlg.onEnd = [this] { vs.EndInterview(); dlg.Reset(); deeds["interview_done"]++; Notify("Interview ended."); };
 
     saveExists = FileExists(JS(Cfg(), "save_file", "save.json").c_str());
+
+    // updater: check github releases once per boot while on the title menu.
+    // EI_UPDATE=off disables; EI_UPDATE=fake injects a canned popup for
+    // screenshots; a completed apply leaves _upd_done.txt -> "UPDATED" card
+    gameVersion = JS(Cfg()["game"], "version", "1.0.0");
+    repoUrl = JS(Cfg()["game"], "repo_url", "");
+    updater = std::make_unique<GameUpdater>();
+    updater->SetCurrent(gameVersion);
+    {
+        std::string dv, dn;
+        const char* uh = std::getenv("EI_UPDATE");
+        if (GameUpdater::ConsumeAppliedMarker(dv, dn)) {
+            updater->ForceState(GameUpdater::State::Applied, dv.c_str(), dn.c_str());
+            updOpen = 1;
+        } else if (uh && !std::strcmp(uh, "fake")) {
+            updater->ForceState(GameUpdater::State::Available, "v9.9.9",
+                "- fixed a visitor who arrived without a face\n"
+                "- filing cabinet drawers now contain the correct year\n"
+                "- hallway extended; the end no longer renders\n"
+                "- plants stop counting as witnesses\n"
+                "- clocks agreed to disagree\n"
+                "- improved pause menu kerning (very important)\n"
+                "- the basement level stays where it was left\n"
+                "- audio: the hum is now 4% more ominous\n"
+                "- door seals tightened after the incident\n"
+                "- clipboard paper is now regulation weight\n");
+            updOpen = 1;
+        } else if (!uh || std::strcmp(uh, "off")) {
+            updater->Start(repoUrl, gameVersion);
+        }
+    }
     // dev screenshots (EI_SHOT / F12 / EI_DUMPRT) collect in shots/ instead
     // of littering the exe folder - raylib's TakeScreenshot strips dirs, so
     // capture by hand (LoadImageFromScreen + ExportImage respects the path)
@@ -142,6 +173,42 @@ bool Game::Init() {
             player.yaw = v[3]; player.pitch = v[4];
         }
     }
+    if (const char* pp = std::getenv("EI_PATH")) {
+        // trailer/dev camera path: "t,x,y,z,yaw,pitch; t,x,y,z,yaw,pitch; ..."
+        // flycam rides smoothstep-lerped keyframes on wall-clock time; the
+        // run auto-quits 1s past the last key. HUD is suppressed while a
+        // path is active - pair with EI_RECDUMP for clean footage.
+        std::string s = pp; size_t p0 = 0;
+        while (p0 <= s.size()) {
+            size_t p1 = s.find(';', p0);
+            std::string k = s.substr(p0, p1 == std::string::npos ? p1 : p1 - p0);
+            p0 = (p1 == std::string::npos) ? s.size() + 1 : p1 + 1;
+            float v[6] = {}; int n = 0;
+            for (size_t a = 0, b; a <= k.size() && n < 6; a = b + 1) {
+                b = k.find(',', a); if (b == std::string::npos) b = k.size();
+                v[n++] = (float)atof(k.substr(a, b - a).c_str());
+            }
+            if (n >= 6) pathKeys.push_back({v[0], v[1], v[2], v[3], v[4], v[5]});
+        }
+        if (!pathKeys.empty()) {
+            std::sort(pathKeys.begin(), pathKeys.end(),
+                      [](const PathKey& a, const PathKey& b) { return a.t < b.t; });
+            debug = true; flycam = true;
+            flyPos = {pathKeys[0].x, pathKeys[0].y, pathKeys[0].z};
+            player.yaw = pathKeys[0].yaw; player.pitch = pathKeys[0].pitch;
+            pathT0 = (float)GetTime();
+            pathEnd = pathKeys.back().t + 1.0f;
+        }
+    }
+    if (const char* rd = std::getenv("EI_RECDUMP")) {
+        // dev hook: dump every rendered frame as shots/rec/f_%05d.png at
+        // the given fps - ffmpeg reassembles them into video offline.
+        recDumpFps = (float)std::atof(rd);
+        if (recDumpFps > 0.f) std::filesystem::create_directories("shots/rec");
+    }
+    // EI_CLEAN=1 (or any EI_RECDUMP run): keep flycam/path mechanics but hide
+    // all debug chrome - F3 overlay, osTex thumbnail, prompts, toasts, clock
+    if (recDumpFps > 0.f || std::getenv("EI_CLEAN")) cleanDebug = true;
     if (const char* np = std::getenv("EI_NPC")) {
         // dev: posed humanoid dummies, no AI - for debug screenshots.
         // spec: "x,y,z[,yaw][,flag|key=value...] ; x,y,z[...] ..."
@@ -621,6 +688,38 @@ void Game::UpdateRoam(float dt) {
     player.forcedCrouch = underDesk;
 
     if (flycam) {
+        if (!pathKeys.empty()) {
+            // scripted camera path (EI_PATH): smoothstep-lerped keyframes,
+            // input ignored - this is a playback head, not a free camera.
+            // under EI_RECDUMP the head runs on the fixed-step clock so path
+            // timing stays frame-exact regardless of dump speed
+            float t = (recDumpFps > 0.f) ? recTime : (float)GetTime() - pathT0;
+            const PathKey* a = &pathKeys.front();
+            const PathKey* b = &pathKeys.back();
+            for (size_t i = 0; i + 1 < pathKeys.size(); i++)
+                if (t >= pathKeys[i].t && t < pathKeys[i + 1].t) {
+                    a = &pathKeys[i]; b = &pathKeys[i + 1];
+                }
+            if (t >= pathKeys.back().t) a = b = &pathKeys.back();
+            float u = (b->t > a->t) ? (t - a->t) / (b->t - a->t) : 1.f;
+            u = u * u * (3.f - 2.f * u);
+            float dyaw = std::fmod(b->yaw - a->yaw + 540.f, 360.f) - 180.f;
+            flyPos = {a->x + (b->x - a->x) * u, a->y + (b->y - a->y) * u,
+                      a->z + (b->z - a->z) * u};
+            player.yaw = a->yaw + dyaw * u;
+            player.pitch = a->pitch + (b->pitch - a->pitch) * u;
+            Vector3 f = player.Forward();
+            cam.position = flyPos;
+            cam.target = {flyPos.x + f.x, flyPos.y + f.y, flyPos.z + f.z};
+            cam.up = {0.f, 1.f, 0.f};
+            camRoll = 0;
+            cam.fovy = fovBase;
+            player.moving = false; player.strafe = 0; player.moveAmt = 0;
+            interactTarget = nullptr;
+            interactLabel.clear();
+            if (pathEnd > 0.f && t >= pathEnd) quit = true;
+            return;
+        }
         // F4 debug fly camera: the player body stays put and untouched while
         // the lens roams - WASD fly, SPACE/CTRL vertical, F6 drops the player
         // at the camera (ground level) for collision/nav testing
@@ -1024,16 +1123,16 @@ void Game::UpdateCommon(float dt) {
     // the hall door gives way for bodies passing through it (crew, visitors,
     // ambient leavers) instead of everyone clipping a shut panel
     {
-        bool near = false;
+        bool bodyNear = false;   // `near` is a windows.h macro via httplib
         auto closeToHall = [](Vector3 p) {
             // covers the doorway and the corridor behind it (incl. the turn)
             return p.x > 4.2f && p.x < 9.6f && p.z < -9.2f && p.z > -13.4f;
         };
-        for (auto& e : crew) for (auto& m : e.men) if (closeToHall(m.pos)) near = true;
-        if (vs.Cur().Active() && closeToHall(vs.Cur().pos)) near = true;
-        for (auto& a : vs.ambient) if (closeToHall(a.pos)) near = true;
+        for (auto& e : crew) for (auto& m : e.men) if (closeToHall(m.pos)) bodyNear = true;
+        if (vs.Cur().Active() && closeToHall(vs.Cur().pos)) bodyNear = true;
+        for (auto& a : vs.ambient) if (closeToHall(a.pos)) bodyNear = true;
         if (Furni* hd = office.Find("hall_door"))
-            hd->rotY += ((near ? -100.f : 0.f) - hd->rotY) * std::min(1.f, dt * 5.f);
+            hd->rotY += ((bodyNear ? -100.f : 0.f) - hd->rotY) * std::min(1.f, dt * 5.f);
     }
 
     // ---- animated anomaly kinds - flag-driven, run every frame ----
@@ -1411,7 +1510,7 @@ void Game::DrawWorld() {
     }
     office.DrawGlass();
     EndMode3D();
-    if (debug && osTexOk) // F3: OS texture thumbnail to verify FBO content/orientation
+    if (debug && !cleanDebug && osTexOk) // F3: OS texture thumbnail to verify FBO content/orientation
         DrawTexturePro(osTex.texture,
                        Rectangle{0, 0, (float)osTex.texture.width, -(float)osTex.texture.height},
                        Rectangle{10, 10, 312, 192}, Vector2{0, 0}, 0, WHITE);
@@ -1424,6 +1523,12 @@ void Game::Run() {
     while (!quit && !WindowShouldClose()) {
         float dt = GetFrameTime();
         dt = std::min(dt, 0.1f);
+        if (recDumpFps > 0.f) {
+            // recording mode: fixed timestep so PNG-dump cost never warps the
+            // footage - every rendered frame is exactly one video frame
+            dt = 1.f / recDumpFps;
+            recTime += dt;
+        }
         int W = GetScreenWidth(), H = GetScreenHeight();
 
         if (IsKeyPressed(KEY_F3)) debug = !debug;
@@ -1649,7 +1754,7 @@ void Game::Run() {
         else if (mode == Mode::Dead || mode == Mode::Win) DrawEnding();
         else {
             if (fx.ok) fx.Blit(); else DrawWorld();
-            if (debug && osTexOk) // F3: OS texture thumbnail (FBO content/orientation)
+            if (debug && !cleanDebug && osTexOk) // F3: OS texture thumbnail (FBO content/orientation)
                 DrawTexturePro(osTex.texture,
                                Rectangle{0, 0, (float)osTex.texture.width, -(float)osTex.texture.height},
                                Rectangle{10, 10, 312, 192}, Vector2{0, 0}, 0, WHITE);
@@ -1657,7 +1762,7 @@ void Game::Run() {
                 dlg.Draw(A, W, H, vs.Cur().Name(), vs.transcript);
             if (phone.answered && mode != Mode::Pause)
                 phoneDlg.Draw(A, W, H, JS(phone.ev, "persona"), phone.transcript);
-            else if (phone.ringing && mode != Mode::Pause) {
+            else if (phone.ringing && mode != Mode::Pause && pathKeys.empty() && !cleanDebug) {
                 // visible ring indicator so it can't be mistaken for ambience
                 std::string ring = "the desk phone is ringing";
                 Vector2 rts = MeasureTextEx(A.fontSmall, ring.c_str(), 21, 1);
@@ -1667,8 +1772,9 @@ void Game::Run() {
                            Color{235, 200, 110, (unsigned char)(blink * 255)});
             }
 
-            HUD::DrawClock(A, W, gameHour, debug, ad.Instability(), night);
-            if (mode == Mode::Roam && player.hiding) {
+            if (pathKeys.empty() && !cleanDebug)
+                HUD::DrawClock(A, W, gameHour, debug, ad.Instability(), night);
+            if (mode == Mode::Roam && player.hiding && !cleanDebug) {
                 // the taped note under the desk - reads itself to you while
                 // you hide: why you're down here, and what comes after
                 static const char* nl[] = {
@@ -1692,6 +1798,7 @@ void Game::Run() {
                 DrawTextEx(A.fontSmall, hid, {W / 2.f - hs.x / 2, H - 104.f}, 18, 1,
                            Color{140, 175, 190, 200});
             }
+            if (pathKeys.empty() && !cleanDebug) {
             HUD::DrawPrompt(A, W, H, mode == Mode::Roam ?
                 (phone.answered ? "[ESC] hang up" : interactLabel) :
                 (mode == Mode::SitComputer
@@ -1703,7 +1810,8 @@ void Game::Run() {
                     : ""));
             HUD::DrawNotes(A, W, notes);
             if (debug) DrawDebugOverlay();
-            if (loreCardT > 0.f && !loreText.empty()) {
+            }
+            if (loreCardT > 0.f && !loreText.empty() && !cleanDebug) {
                 // the slid-in note, read: same parchment card the hide note uses
                 std::vector<std::string> wl = WrapText(A.font, loreText, 21, 1, W * 0.44f);
                 float nw = 0;
@@ -1722,7 +1830,8 @@ void Game::Run() {
                 DrawTextEx(A.fontSmall, hint, {W / 2.f - hs.x / 2, card.y + card.height - 22.f},
                            18, 1, Color{120, 100, 72, 255});
             }
-            if (mode == Mode::Roam && !phone.answered) HUD::DrawCrosshair(W, H);
+            if (mode == Mode::Roam && !phone.answered && pathKeys.empty() && !cleanDebug)
+                HUD::DrawCrosshair(W, H);
             if (mode == Mode::Jumpscare) {
                 // face fills the screen
                 float s = scareT / 1.35f;
@@ -1748,12 +1857,24 @@ void Game::Run() {
         UnloadImage(img);
         quit = true;
     }
+        // dev hook: trailer recording - dump EVERY frame as
+        // shots/rec/f_%05d.png (dt is already fixed at 1/fps above, so one
+        // rendered frame == one video frame). PNG = lossless, heavy I/O -
+        // the fixed clock keeps timing right anyway
+        if (recDumpFps > 0.f) {
+            char nm[64];
+            snprintf(nm, 64, "shots/rec/f_%05d.png", recFrame++);
+            Image img = LoadImageFromScreen();
+            ExportImage(img, nm);
+            UnloadImage(img);
+        }
     }
 }
 
 
 void Game::Shutdown() {
     SaveSettings();
+    if (updater) updater->Stop();
     if (osTexOk) UnloadRenderTexture(osTex);
     fx.Shutdown();
     llm.Shutdown();

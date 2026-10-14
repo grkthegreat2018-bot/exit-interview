@@ -278,6 +278,20 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
 - `EI_PAUSE=1` — pop the pause menu once after entering Roam/seated (shots).
 - `EI_APP=book|phone|paper|building` — pin a monitor app open (EI_PLAY=sit).
 - `EI_HOUR=<abs>` / `EI_VISIT=<slot>` — jump shift clock / schedule index.
+- `EI_PATH="t,x,y,z,yaw,pitch; ..."` — scripted camera keyframes (flycam
+  rides smoothstep-lerped positions; input ignored; auto-quits 1s past the
+  last key). HUD/prompts/notes are suppressed while a path runs.
+- `EI_RECDUMP=<fps>` — dumps every rendered frame to `shots/rec/f_%05d.png`
+  and switches the sim to a FIXED dt=1/fps timestep so PNG write cost never
+  warps motion. The `EI_PATH` clock also runs on this accumulator, so path
+  timing stays frame-exact. Auto-enables `cleanDebug`.
+- `EI_CLEAN=1` — clean-recording mode: flycam/path mechanics still work but
+  all debug chrome is hidden (F3 overlay, osTex thumbnail, HUD clock,
+  prompts, toasts, crosshair, ring indicator). Implied by `EI_RECDUMP`.
+- `EI_UPDATE=off|fake` — disable the github update check / inject a canned
+  "update available" popup for UI shots. After a real apply, the apply
+  script drops `_upd_done.txt` in the install root and the game shows the
+  "update applied" card once on next boot.
 - F3 debug overlay now draws a live state block (pos/cam/mode/door/blinds/
   visitor/anomaly ids); F4 toggles FLYCAM — free-fly camera, player body
   locked, WASD + SPACE/CTRL + SHIFT-fast, F6 drops the player at the lens,
@@ -310,3 +324,37 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   settings.json + save.json into `ei_profile.json` next to the exe. A build
   with no settings.json auto-imports it on boot — drop the one file into a
   new ZIP build's folder to carry over everything, API key included.
+
+## Auto-updater (src/update.h)
+
+- `GameUpdater` checks `api.github.com/repos/<owner/repo>/releases/latest`
+  once per boot from the title screen (repo parsed from
+  `game.repo_url` in config.json; current version from `game.version`).
+- Popup on title shows version delta + scrollable changelog (release body);
+  DOWNLOAD fetches the platform asset (`*-win64.zip` / `*-linux64.tar.gz`)
+  into `_update/pkg.bin`, RESTART & APPLY writes a detached apply script
+  (powershell on win / sh on linux) that waits for the game pid to exit,
+  unpacks, sha256-diffs every manifest entry (only changed files copied,
+  files dropped between releases are removed via the OLD root
+  `manifest.json`), stamps `_upd_done.txt`, and relaunches. Save files,
+  settings and `ei_profile.json` are never in the manifest -> untouched.
+- IMPORTANT: keep the apply-script literals at file scope and OUTSIDE
+  `#ifdef` - MSVC does not recognize raw strings in skipped preprocessor
+  regions, and the shell script's `/*` globs would lex as an unterminated
+  comment (C1071) in the Windows build.
+- CI (`.github/workflows/build.yml`) builds both packages on every push and
+  embeds `manifest.json` (sha256 per file); on `v*` tags it stamps
+  `game.version` from the tag and publishes a GitHub Release with both
+  assets - the release body IS the popup changelog.
+
+## Trailer tooling (trailer.py)
+
+- `python trailer.py` renders `trailer.mp4` (~45s, 1080p24): it launches
+  the game once per scripted scene with `EI_PLAY=1 EI_PATH=... EI_RECDUMP=24`,
+  collects `shots/rec/f_*.png`, ffmpeg-encodes each clip, adds drawtext
+  title cards + a menu music track. Scenes are data (SCENES list) - path
+  keys are `t,x,y,z,yaw,pitch` (yaw 0 = +z). `--scene <name>` renders one
+  clip for iteration, `--keep` keeps frame dirs.
+- Scene rule: atmosphere + mechanics only, no lore reveals (no figures,
+  no endings, no notes content - `wrongness` uses desk_float as the one
+  restrained hint).

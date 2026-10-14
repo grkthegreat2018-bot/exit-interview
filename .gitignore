@@ -17,5 +17,14 @@ shots/
 # music synth intermediates
 .devin/musictmp/
 
+# trailer render intermediates + output
+trailer_work/
+trailer.mp4
+
+# updater staging dirs (created next to the exe at runtime)
+_update/
+_upd_done.txt
+_update_failed.txt
+
 # vcpkg local install if it lands in-tree
 vcpkg_installed/
