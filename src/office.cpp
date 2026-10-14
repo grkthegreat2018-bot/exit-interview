@@ -168,6 +168,7 @@ void Office::ApplyMutation(const std::string& targetId, const json& m) {
     }
     if (m.contains("rot_set")) f->rotY = JF(m, "rot_set", f->rotY);
     if (m.contains("eyes")) f->eyes = m["eyes"].get<bool>();
+    if (m.contains("fly")) f->fly = m["fly"].get<bool>();    // paper stack bursts into a swarm
     if (m.contains("art")) f->art = JS(m, "art");            // wall decor swaps its image
 }
 
@@ -217,6 +218,32 @@ bool Office::RestsOn(const Furni& it, const Furni& host) const {
 
 void Office::Update(float dt) {
     tick++;
+    animT += dt;
+    // floating = off the floor, nothing holding it up, not a mounted type.
+    // Derived every frame: anomaly moves, glides, crew shoves and resolves
+    // all just move pos - the flag follows. Second pass: riders on a
+    // floating host float too (the monitor levitates WITH the desk)
+    auto mounted = [](FT t) {
+        switch (t) {
+            case FT::Poster: case FT::WallClock: case FT::Blinds: case FT::Outlet:
+            case FT::Switch: case FT::CeilingLight: case FT::Door: case FT::Note:
+                return true;
+            default: return false;
+        }
+    };
+    for (auto& f : items) {
+        bool supported = f.pos.y > 0.05f;
+        if (supported) {
+            supported = false;
+            for (auto& h : items)
+                if (RestsOn(f, h)) { supported = true; break; }
+        }
+        f.floating = f.pos.y > 0.05f && !supported && !mounted(f.ft);
+    }
+    for (auto& f : items)
+        if (!f.floating && f.pos.y > 0.05f && !mounted(f.ft))
+            for (auto& h : items)
+                if (RestsOn(f, h) && h.floating) { f.floating = true; break; }
     for (auto& g : moveGlides) {
         g.t += dt;
         float u = std::clamp(g.t / g.dur, 0.f, 1.f);
@@ -318,16 +345,32 @@ void Office::Draw() const {
     const char* cut = DevEnv("EI_FCUT");
     for (auto& f : items) {
         int idx = i++;
-        if (!f.hidden && (!cut || idx < std::atoi(cut))) DrawItem(f);
+        if (f.hidden || (cut && idx >= std::atoi(cut))) continue;
+        if (f.floating) {
+            // levitating: gentle bob + yaw wobble on a per-item phase so
+            // a floating desk and everything riding it drift out of sync -
+            // reads as "held up by something", not a static prop offset
+            unsigned ph = 0;
+            for (char ch : f.id) ph = ph * 31u + (unsigned char)ch;
+            Furni wob = f;
+            wob.pos.y += std::sin(animT * 1.6f + ph) * 0.018f;
+            wob.pos.x += std::sin(animT * 0.43f + ph * 1.31f) * 0.010f;
+            wob.pos.z += std::cos(animT * 0.37f + ph * 0.77f) * 0.010f;
+            wob.rotY += std::sin(animT * 0.9f + ph * 1.7f) * 1.4f;
+            DrawItem(wob);
+        } else DrawItem(f);
     }
     DrawCables();   // world-space cords strung between furniture
-    // fake contact AO: soft dark pools under anything standing on the floor
+    // fake contact AO: soft dark pools under anything standing on the floor.
+    // floaters get a fainter pool - the shadow knows it isn't touching
     for (auto& f : items) {
-        if (f.hidden || f.pos.y > 0.05f) continue;             // floor-standing only
+        if (f.hidden) continue;
+        if (f.pos.y > 0.05f && !f.floating) continue;          // floor-standing only
         if (f.ft == FT::Door || f.ft == FT::Rug) continue;     // hinged panel / decal
         float rx = f.size.x / 2 + 0.16f, rz = f.size.z / 2 + 0.16f;
         if (rx < 0.22f || rz < 0.22f) continue;                // thin wall plates
-        DrawBlobShadow({f.pos.x, 0.015f, f.pos.z}, rx, rz, 0.40f, f.rotY);
+        DrawBlobShadow({f.pos.x, 0.015f, f.pos.z}, rx, rz,
+                       f.floating ? 0.22f : 0.40f, f.rotY);
     }
 }
 
@@ -976,6 +1019,30 @@ void Office::DrawItem(const Furni& f) const {
                 OBox(0, dy, face * (th / 2 + 0.012f), 0.014f, 0.020f, 0.003f,
                      tint(Color{20, 19, 22, 255}));                           // slot holes
             }
+        }
+    } else if (f.ft == FT::PaperStack && f.fly) {
+        // separated: the stack burst apart - every sheet rides its own
+        // tumbling orbit around the office, dipping and rolling past
+        // everything. Drawn relative to the (empty) stack spot so the
+        // anomaly still owns a Furni to report on
+        int n = 11;
+        for (int i = 0; i < n; i++) {
+            float ph = i * 2.39996f;                         // golden-angle spread
+            float spd = 0.85f + (i % 4) * 0.29f;
+            float a = animT * spd + ph;
+            float rad = 0.9f + (i % 5) * 0.40f;
+            rlPushMatrix();
+            rlTranslatef(0.45f - p.x + std::cos(a) * rad,
+                         1.30f - p.y + std::sin(a * 0.63f + ph) * 0.55f
+                                    + std::sin(animT * 2.1f + ph) * 0.06f,
+                         0.25f - p.z + std::sin(a) * rad * 0.8f);
+            rlRotatef(std::fmod(a * 62.f, 360.f), 0, 1, 0);            // flat spin
+            rlRotatef(18.f + std::sin(animT * 1.7f + ph) * 40.f, 1, 0, 0); // tumble
+            CBox({0, 0, 0}, {s.x, 0.006f, s.z}, tint(c));
+            Color ln = tint(Color{96, 92, 106, 255});
+            CBox({-s.x * 0.08f, 0.0045f, -s.z * 0.2f},
+                 {s.x * 0.5f, 0.002f, 0.018f}, ln);
+            rlPopMatrix();
         }
     } else if (f.ft == FT::PaperStack) {
         // real stacked sheets: jittered layers, the top one skewed a few

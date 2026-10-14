@@ -376,9 +376,14 @@ void Game::UpdateCrew(float dt) {
                 if (!f || f->hidden) continue;          // vanished item: the box swap reads instead
                 float dx = f->pos.x - o.snapshot.pos.x, dy = f->pos.y - o.snapshot.pos.y,
                       dz = f->pos.z - o.snapshot.pos.z, dr = f->rotY - o.snapshot.rotY;
-                f->pos = {o.snapshot.pos.x + dx * (1.f - pk),
-                          o.snapshot.pos.y + dy * (1.f - pk),
-                          o.snapshot.pos.z + dz * (1.f - pk)};
+                Vector3 np{o.snapshot.pos.x + dx * (1.f - pk),
+                           o.snapshot.pos.y + dy * (1.f - pk),
+                           o.snapshot.pos.z + dz * (1.f - pk)};
+                // riders on the host's top track the same shove delta
+                Vector3 dd{np.x - f->pos.x, np.y - f->pos.y, np.z - f->pos.z};
+                for (auto& it : office.items)
+                    if (office.RestsOn(it, *f)) it.pos = Vector3Add(it.pos, dd);
+                f->pos = np;
                 f->rotY = o.snapshot.rotY + dr * (1.f - pk);
                 f->size = {o.snapshot.size.x + (f->size.x - o.snapshot.size.x) * (1.f - pk),
                            o.snapshot.size.y + (f->size.y - o.snapshot.size.y) * (1.f - pk),

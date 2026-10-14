@@ -2221,6 +2221,28 @@
    "instab": 1.6
   },
   {
+   "id": "papers_swarm",
+   "target": "papers",
+   "mutation": {
+    "fly": true
+   },
+   "desc": "The paper stack burst apart - sheets are flying around the office",
+   "keywords": [
+    "papers",
+    "paper",
+    "flying",
+    "floating",
+    "sheets",
+    "forms",
+    "swarm",
+    "air",
+    "around",
+    "scattered",
+    "loose"
+   ],
+   "instab": 1.5
+  },
+  {
    "id": "couch_gone",
    "target": "couch",
    "mutation": {

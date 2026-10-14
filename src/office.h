@@ -43,6 +43,8 @@ struct Furni {
     bool stopped = false;       // anomaly: wall clock frozen
     bool backwards = false;     // anomaly: wall clock hands run in reverse
     bool eyes = false;          // anomaly: grows eyes that track the player
+    bool fly = false;           // anomaly: paper sheets torn loose, swarming the room
+    bool floating = false;      // derived per-frame: airborne & unsupported -> draw wobbles
     std::string art;            // poster art style: "" | landscape | portrait | abstract | notice | certificate | sign
     std::string interact;       // "sit" | "blinds" | "door" | "switch" | "sit_monitor" | "phone"
     std::string room = "office";
@@ -62,6 +64,7 @@ public:
     void DrawCables() const;  // power/data cords strung between furniture (pc->monitor, pc->outlet)
     void DrawGlass() const;   // translucent window pane - must draw LAST (depth-write would occlude room)
     void Update(float dt);    // advances move-glides (anomaly furniture sliding into place)
+    float animT = 0.f;          // furniture anim clock - dt accumulator, RECDUMP-safe
     bool MonitorQuad(Vector3& center, float& w, float& h, float& z) const; // screen face rect
     Vector3 MonitorScreenCenter() const;
     bool MonitorUV(Vector3 ro, Vector3 rd, Vector2& uv) const;    // aim ray -> screen UV

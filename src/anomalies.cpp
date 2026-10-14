@@ -335,7 +335,16 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
 
 void AnomalyDirector::ApplyResolveFx(const ResolveOutcome& o, Office& office) {
     if (o.hadTarget)
-        if (Furni* f = office.Find(o.targetId)) *f = o.snapshot;
+        if (Furni* f = office.Find(o.targetId)) {
+            // riders carried along by a translate/pos_set (levitating desk's
+            // monitor/phone/papers) come back with the host - they still rest
+            // on its moved top, so shift them by the restore delta
+            Vector3 d{o.snapshot.pos.x - f->pos.x, o.snapshot.pos.y - f->pos.y,
+                      o.snapshot.pos.z - f->pos.z};
+            for (auto& it : office.items)
+                if (office.RestsOn(it, *f)) it.pos = Vector3Add(it.pos, d);
+            *f = o.snapshot;
+        }
     // deferred spawned furniture is carried out by the crew instead of removed here
     if (!o.spawnedId.empty() && !o.deferred) office.RemoveSpawned(o.spawnedId);
     std::erase_if(pending, [&](const ActiveAnomaly& a) { return a.id == o.id; });
