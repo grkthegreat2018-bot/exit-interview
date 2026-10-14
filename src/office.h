@@ -74,6 +74,8 @@ public:
 
     // anomaly mutation: caller snapshots the Furni first if it wants to revert
     void ApplyMutation(const std::string& targetId, const json& mutation);
+    // true when `it` stands on `host`'s top surface - carried by translates
+    bool RestsOn(const Furni& it, const Furni& host) const;
     // same, but positional/rotational changes glide in over ~dur seconds with
     // an overshoot jolt (the "furniture scraped across the floor" read)
     void ApplyMutationAnimated(const std::string& targetId, const json& mutation, float dur = 0.6f);

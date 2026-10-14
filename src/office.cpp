@@ -147,6 +147,9 @@ void Office::ApplyMutation(const std::string& targetId, const json& m) {
     if (!f) return;
     if (m.contains("translate")) {
         Vector3 t = JV3(m["translate"]);
+        // items standing on the host's top surface ride along - a
+        // levitating desk takes its monitor/phone/papers with it
+        for (auto& it : items) if (RestsOn(it, *f)) it.pos = Vector3Add(it.pos, t);
         f->pos.x += t.x; f->pos.y += t.y; f->pos.z += t.z;
     }
     if (m.contains("color")) f->color = JC(m["color"], f->color);
@@ -157,7 +160,12 @@ void Office::ApplyMutation(const std::string& targetId, const json& m) {
     }
     if (m.contains("stopped")) f->stopped = m["stopped"].get<bool>();
     if (m.contains("backwards")) f->backwards = m["backwards"].get<bool>();
-    if (m.contains("pos_set")) f->pos = JV3(m["pos_set"]);
+    if (m.contains("pos_set")) {
+        Vector3 np = JV3(m["pos_set"]);
+        Vector3 d{np.x - f->pos.x, np.y - f->pos.y, np.z - f->pos.z};
+        for (auto& it : items) if (RestsOn(it, *f)) it.pos = Vector3Add(it.pos, d);
+        f->pos = np;
+    }
     if (m.contains("rot_set")) f->rotY = JF(m, "rot_set", f->rotY);
     if (m.contains("eyes")) f->eyes = m["eyes"].get<bool>();
     if (m.contains("art")) f->art = JS(m, "art");            // wall decor swaps its image
@@ -168,6 +176,13 @@ void Office::ApplyMutationAnimated(const std::string& targetId, const json& m, f
     if (!f || m.contains("spawn")) { ApplyMutation(targetId, m); return; }
     Vector3 preP = f->pos;
     float preR = f->rotY;
+    // items resting on the host's top ride along on their own glides so
+    // everything slides in sync (ApplyMutation already carried them to
+    // their final pos - snapshot where they started, then rewind)
+    std::vector<std::pair<std::string, Vector3>> riders;
+    if (m.contains("translate") || m.contains("pos_set"))
+        for (auto& it : items)
+            if (RestsOn(it, *f)) riders.push_back({it.id, it.pos});
     ApplyMutation(targetId, m);
     // only positional/rotational moves get the slide - color/eyes/etc. are
     // still instant (there's nothing to watch moving)
@@ -179,6 +194,25 @@ void Office::ApplyMutationAnimated(const std::string& targetId, const json& m, f
     g.fromR = preR; g.toR = f->rotY; g.dur = dur;
     f->pos = preP; f->rotY = preR;   // rewind - Update() slides it into place
     moveGlides.push_back(g);
+    for (auto& [rid, rp] : riders) {
+        Furni* c = Find(rid);
+        if (!c) continue;
+        MoveGlide rg;
+        rg.id = rid; rg.fromP = rp; rg.toP = c->pos;
+        rg.fromR = rg.toR = c->rotY; rg.dur = dur;
+        c->pos = rp;
+        moveGlides.push_back(rg);
+    }
+}
+
+bool Office::RestsOn(const Furni& it, const Furni& host) const {
+    // standing on the host's top surface: base height matches the top,
+    // footprint lands inside the host's horizontal extent
+    if (&it == &host) return false;
+    if (std::fabs(it.pos.y - (host.pos.y + host.size.y)) > 0.12f) return false;
+    if (std::fabs(it.pos.x - host.pos.x) > host.size.x / 2 + 0.06f) return false;
+    if (std::fabs(it.pos.z - host.pos.z) > host.size.z / 2 + 0.06f) return false;
+    return true;
 }
 
 void Office::Update(float dt) {
