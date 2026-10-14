@@ -127,7 +127,7 @@ void DrawHumanoidEyes() {
     g_eyeDraws.clear();
 }
 
-void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated, float animT, float armRaise, float seatH, float walkAmt, float detain) {
+void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated, float animT, float armRaise, float seatH, float walkAmt, float detain, Vector3 look) {
     // grounding blob on the floor (y fixed: feet.y can ride a ladder lift)
     DrawBlobShadow({feet.x, 0.015f, feet.z}, 0.40f * a.height, 0.40f * a.height, 0.40f);
     float h = 1.72f * a.height;
@@ -324,11 +324,28 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                        hb.z + f.z * 0.099f * a.height + r.z * 0.040f * s * a.height};
             EyeDraw e{ep, {}, {}, er * a.height, 0, 0, ec, {}, false};
             if (a.eyes == "normal") {
+                // iris+pupil slide toward `look` - eyes track whoever you're
+                // talking to. Offset is clamped small so the iris never leaves
+                // the sclera disc; normal eyes only, mutants don't glance
+                float gx = 0.f, gy = 0.f;
+                if (look.x != 0.f || look.y != 0.f || look.z != 0.f) {
+                    Vector3 g{look.x - ep.x, look.y - ep.y, look.z - ep.z};
+                    float gl = std::sqrt(g.x*g.x + g.y*g.y + g.z*g.z);
+                    if (gl > 0.001f) {
+                        g.x /= gl; g.y /= gl; g.z /= gl;
+                        gx = std::clamp(g.x * r.x + g.z * r.z, -1.f, 1.f) * 0.006f * a.height;
+                        gy = std::clamp(g.y, -1.f, 1.f) * 0.004f * a.height;
+                    }
+                }
                 e.iris = true;
-                e.ir = {ep.x + f.x * 0.016f * a.height, ep.y, ep.z + f.z * 0.016f * a.height};
+                e.ir = {ep.x + f.x * 0.016f * a.height + r.x * gx,
+                        ep.y + gy,
+                        ep.z + f.z * 0.016f * a.height + r.z * gx};
                 e.irR = 0.0115f * a.height;
                 e.ic = a.eyeCol;
-                e.pu = {ep.x + f.x * 0.021f * a.height, ep.y, ep.z + f.z * 0.021f * a.height};
+                e.pu = {ep.x + f.x * 0.021f * a.height + r.x * gx * 1.4f,
+                        ep.y + gy * 1.4f,
+                        ep.z + f.z * 0.021f * a.height + r.z * gx * 1.4f};
                 e.puR = 0.0055f * a.height;
             }
             g_eyeDraws.push_back(e);
@@ -1231,7 +1248,10 @@ void VisitorSystem::Draw() const {
                 float wAmt = a.walking
                     ? (a.sitT < 0.f ? 1.f : std::max(0.f, 1.f - a.sitT) * 0.7f)
                     : (a.standing ? std::max(0.f, 1.f - a.sitT) * 0.7f : 0.f);
-                DrawHumanoid(a.pos, a.yaw, a.app, seated, a.t, 0.f, sh, wAmt);
+                // people glance at you when you're close - quiet rooms watch
+                float dx = playerPos.x - a.pos.x, dz = playerPos.z - a.pos.z;
+                Vector3 look = (dx * dx + dz * dz < 7.f) ? playerPos : Vector3{};
+                DrawHumanoid(a.pos, a.yaw, a.app, seated, a.t, 0.f, sh, wAmt, 0.f, look);
             }
         }
     }
@@ -1262,8 +1282,10 @@ void VisitorSystem::Draw() const {
         float wAmt = (cur.detained ? cur.detainWalk
                    : (cur.state == VState::ToDoor || cur.state == VState::ToChair ||
                       cur.state == VState::Leaving)) ? 1.f : 0.f;
+        // the person across the desk watches you while you talk
+        Vector3 look = (cur.seated || cur.state == VState::Seated) ? playerPos : Vector3{};
         DrawHumanoid(cur.pos, cur.yaw, cur.app, cur.seated, cur.animT, 0.f, cur.seatH, wAmt,
-                     cur.detained ? 1.f : 0.f);
+                     cur.detained ? 1.f : 0.f, look);
     }
 }
 

@@ -210,6 +210,7 @@ private:
         Vector3 pos{0, 0, 0};
         float yaw = 0, seatH = 0.5f;
         bool seated = false, female = false, frozen = false, male = false;
+        bool look = false;   // eyes track the camera (EI_NPC 'look' flag)
         float walk = 0, raise = 0, detain = 0, anim = 0, height = 1.f;
         int hair = -1;              // -1 = pick from the seed hash
         std::string eyes;           // "" = persona default (normal)

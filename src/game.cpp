@@ -253,6 +253,7 @@ bool Game::Init() {
                 else if (k == "female")  n.female = true;
                 else if (k == "male")    n.male = true;
                 else if (k == "frozen")  n.frozen = true;
+                else if (k == "look")    n.look = true;   // eyes track the camera
                 else if (k == "yaw")     n.yaw = (float)atof(val.c_str());
                 else if (k == "walkamt") n.walk = (float)atof(val.c_str());
                 else if (k == "raise")   n.raise = (float)atof(val.c_str());
@@ -689,25 +690,36 @@ void Game::UpdateRoam(float dt) {
 
     if (flycam) {
         if (!pathKeys.empty()) {
-            // scripted camera path (EI_PATH): smoothstep-lerped keyframes,
-            // input ignored - this is a playback head, not a free camera.
-            // under EI_RECDUMP the head runs on the fixed-step clock so path
-            // timing stays frame-exact regardless of dump speed
+            // scripted camera path (EI_PATH): Catmull-Rom through keyframes -
+            // C1-continuous velocity, no per-segment stall like smoothstep.
+            // Input ignored - this is a playback head, not a free camera.
+            // Under EI_RECDUMP the head runs on the fixed-step clock so path
+            // timing stays frame-exact regardless of dump speed.
             float t = (recDumpFps > 0.f) ? recTime : (float)GetTime() - pathT0;
-            const PathKey* a = &pathKeys.front();
-            const PathKey* b = &pathKeys.back();
-            for (size_t i = 0; i + 1 < pathKeys.size(); i++)
-                if (t >= pathKeys[i].t && t < pathKeys[i + 1].t) {
-                    a = &pathKeys[i]; b = &pathKeys[i + 1];
-                }
-            if (t >= pathKeys.back().t) a = b = &pathKeys.back();
-            float u = (b->t > a->t) ? (t - a->t) / (b->t - a->t) : 1.f;
-            u = u * u * (3.f - 2.f * u);
-            float dyaw = std::fmod(b->yaw - a->yaw + 540.f, 360.f) - 180.f;
-            flyPos = {a->x + (b->x - a->x) * u, a->y + (b->y - a->y) * u,
-                      a->z + (b->z - a->z) * u};
-            player.yaw = a->yaw + dyaw * u;
-            player.pitch = a->pitch + (b->pitch - a->pitch) * u;
+            size_t i = 0, n = pathKeys.size();
+            while (i + 1 < n && t >= pathKeys[i + 1].t) i++;
+            const PathKey& P0 = pathKeys[i ? i - 1 : 0];
+            const PathKey& P1 = pathKeys[i];
+            const PathKey& P2 = pathKeys[std::min(i + 1, n - 1)];
+            const PathKey& P3 = pathKeys[std::min(i + 2, n - 1)];
+            float u = (P2.t > P1.t) ? std::clamp((t - P1.t) / (P2.t - P1.t), 0.f, 1.f) : 1.f;
+            auto cr = [](float p0, float p1, float p2, float p3, float uu) {
+                float u2 = uu * uu, u3 = u2 * uu;
+                return 0.5f * (2.f * p1 + (-p0 + p2) * uu +
+                               (2.f * p0 - 5.f * p1 + 4.f * p2 - p3) * u2 +
+                               (-p0 + 3.f * p1 - 3.f * p2 + p3) * u3);
+            };
+            // yaw keys get shortest-arc unwrapped off P1 before splining so a
+            // 350->10 pan goes +20 through 0, not -340 the long way
+            auto wrap = [](float d) { return std::fmod(d + 540.f, 360.f) - 180.f; };
+            float y0 = P1.yaw + wrap(P0.yaw - P1.yaw);
+            float y2 = P1.yaw + wrap(P2.yaw - P1.yaw);
+            float y3 = y2 + wrap(P3.yaw - P2.yaw);
+            flyPos = {cr(P0.x, P1.x, P2.x, P3.x, u),
+                      cr(P0.y, P1.y, P2.y, P3.y, u),
+                      cr(P0.z, P1.z, P2.z, P3.z, u)};
+            player.yaw = std::fmod(cr(y0, P1.yaw, y2, y3, u) + 360.f, 360.f);
+            player.pitch = cr(P0.pitch, P1.pitch, P2.pitch, P3.pitch, u);
             Vector3 f = player.Forward();
             cam.position = flyPos;
             cam.target = {flyPos.x + f.x, flyPos.y + f.y, flyPos.z + f.z};
@@ -1178,7 +1190,7 @@ void Game::UpdateCommon(float dt) {
 
     // what things with eyes / mutated NPCs should track
     office.eyeTarget = player.Eye();
-    vs.playerPos = player.pos;
+    vs.playerPos = player.Eye();   // heads/gaze target: eye height, not feet
 
     // anomaly banging: each swing lands with a real knock + a flinch; hits
     // on the DOOR shudder the panel itself (a transient jitter on rotY that
@@ -1415,7 +1427,8 @@ void Game::DrawDbgNpcs() const {
     for (const DbgNpc& n : dbgNpcs) {
         float t = n.frozen ? n.anim
                            : n.anim + (float)GetTime() * (n.walk > 0.f ? 5.5f : 1.f);
-        DrawHumanoid(n.pos, n.yaw, n.app, n.seated, t, n.raise, n.seatH, n.walk, n.detain);
+        DrawHumanoid(n.pos, n.yaw, n.app, n.seated, t, n.raise, n.seatH, n.walk, n.detain,
+                     n.look ? cam.position : Vector3{});
     }
 }
 

@@ -1430,8 +1430,10 @@ void Office::DrawItem(const Furni& f) const {
         int seg = s.x > 3.f ? 3 : 2;
         float cw = (s.x - 0.06f) / seg;
         for (int i = 0; i < seg; i++)
-            CBox({-s.x / 2 + 0.03f + cw * (i + 0.5f), s.y * 0.86f, 0},
-                 {cw - 0.035f, s.y * 0.14f, s.z - 0.03f}, c);                   // cushions
+            // cushions sink 0.02 into the frame top - a hairline gap between
+            // near-coplanar faces z-fights at grazing angles
+            CBox({-s.x / 2 + 0.03f + cw * (i + 0.5f), s.y * 0.84f, 0},
+                 {cw - 0.035f, s.y * 0.14f, s.z - 0.03f}, c);
         for (int i = -1; i <= 1; i += 2)                                        // back posts
             Box({i * (s.x / 2 - 0.09f), s.y * 0.78f, -s.z / 2 + 0.045f},
                 {0.06f, s.y * 0.55f, 0.06f}, leg);

@@ -59,13 +59,13 @@ SCENES = [
     dict(name="waiting",
          env={"EI_NOVIS": "1",
               "EI_NPC": "-2.7,0,-9.7,0,seated,female;"
-                        "1.9,0,-8.4,0,seated,male,beard=2;"
-                        "3.0,0,-8.4,0,seated,glasses"},
+                        "1.9,0,-8.45,0,seated,male,beard=2;"
+                        "3.0,0,-8.45,0,seated,glasses,look"},
          path="0,-5.0,1.6,-6.6,118,-5;7,-1.6,1.6,-9.4,196,-4"),
 
     # a visitor waits in the open doorway; slow push toward them
     dict(name="visitor",
-         env={"EI_DOOR": "1", "EI_NPC": "0.0,0,-5.5,0;0.4,0,-6.3,20"},
+         env={"EI_DOOR": "1", "EI_NPC": "0.0,0,-5.5,0,look;0.4,0,-6.3,20,look"},
          path="0,1.3,1.55,-1.6,174,-2;6,0.9,1.5,-2.9,179,-3"),
 
     # the one "wrongness" beat - the desk floats where it should not

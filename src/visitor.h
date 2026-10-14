@@ -27,9 +27,12 @@ HumanoidApp AppFromJson(const json& j);
 // walkAmt blends the standing walk-cycle swing (0 = standing still, 1 = full
 // stride); it is auto-scaled by (1 - armRaise) so ladder work always wins.
 // detain = security-escort pose: wrists pinned behind the back, head bowed.
+// look = world-space point the eyes glance toward (e.g. the player's eye
+// during an interview). Zero vector = eyes face forward. Only "normal" eyes
+// track - black-eyed mutants keep their dead straight-ahead stare.
 void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                   float animT, float armRaise = 0.f, float seatH = 0.5f,
-                  float walkAmt = 0.f, float detain = 0.f);
+                  float walkAmt = 0.f, float detain = 0.f, Vector3 look = {});
 // eyes queue up during DrawHumanoid and render here - call after the lit
 // pass (fx.LitOff) so sclera aren't crushed to grey by the office lighting
 void DrawHumanoidEyes();

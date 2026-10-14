@@ -261,7 +261,11 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   when neither flag is given). Keys: `raise=0..1`, `anim=rad`,
   `hair=0..6`, `h=scale`, `seat=h`, `eyes=normal|black|none`,
   `skin|shirt|pants|hairc|eyecol=r.g.b` (dot-separated). Combine with
-  `EI_NOVIS=1` to hide the real visitor/ambient cast.
+  `EI_NOVIS=1` to hide the real visitor/ambient cast. Flag `look` makes the
+  dummy's eyes track the camera (the iris/pupil slide mechanism from
+  DrawHumanoid's `look` arg - the seated interviewee tracks `vs.playerPos`,
+  ambient NPCs glance when the player is within ~2.6m; black/none eyes
+  never track - mutants stare dead ahead).
 - `EI_ANOM=<id>` — force-spawn an office anomaly by def id (e.g. office_lights).
 - `EI_KIND=<kind>` — force-spawn any anomaly by kind (banging_window,
   window_flip, mutated_waiting, hall_long, figure_at_door...).
@@ -278,9 +282,10 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
 - `EI_PAUSE=1` — pop the pause menu once after entering Roam/seated (shots).
 - `EI_APP=book|phone|paper|building` — pin a monitor app open (EI_PLAY=sit).
 - `EI_HOUR=<abs>` / `EI_VISIT=<slot>` — jump shift clock / schedule index.
-- `EI_PATH="t,x,y,z,yaw,pitch; ..."` — scripted camera keyframes (flycam
-  rides smoothstep-lerped positions; input ignored; auto-quits 1s past the
-  last key). HUD/prompts/notes are suppressed while a path runs.
+- `EI_PATH="t,x,y,z,yaw,pitch; ..."` — scripted camera keyframes; the flycam
+  rides a Catmull-Rom spline through them (C1 velocity - no per-segment
+  stall like the old smoothstep). Yaw keys are shortest-arc unwrapped.
+  Input ignored; auto-quits 1s past the last key. HUD suppressed.
 - `EI_RECDUMP=<fps>` — dumps every rendered frame to `shots/rec/f_%05d.png`
   and switches the sim to a FIXED dt=1/fps timestep so PNG write cost never
   warps motion. The `EI_PATH` clock also runs on this accumulator, so path
