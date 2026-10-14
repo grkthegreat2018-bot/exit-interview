@@ -163,7 +163,12 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   arms/legs with real elbows/knees, head bobs twice a stride, chest breathes
   at idle, hips rock across the stance. `detain=1` is the cuffed escort
   pose: wrists crossed behind the back, head bowed (single `hb` anchor
-  drives head+hair+eyes). pass walkAmt 1 while pathing, 0 when planted. Ambient waiting NPCs path to a stand-spot in FRONT of their
+  drives head+hair+eyes). Hair cap spheres MUST exceed the 0.109·h head
+  radius (all styles use >= 0.112·h) - a smaller cap intersects the skull
+  and its exposed sliver renders as a floating ring halo. Normal eyes are
+  smaller-than-socket unlit spheres with skin-tone lid bars over the top
+  edge + a lip line, so they read as eyes not glowing orbs; `look` slides
+  iris/pupil toward the camera. pass walkAmt 1 while pathing, 0 when planted. Ambient waiting NPCs path to a stand-spot in FRONT of their
   seat, then sitT lerps them into the cushion - no more walking into chairs.
   They also CHURN: each seated ambient gets leaveT (~90-240s); on expiry one
   at a time they stand (reverse sit glide to the stand-spot), walk

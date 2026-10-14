@@ -177,6 +177,20 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
     // chest - 12-slice cross-section aligns its facets with the waistband
     DrawCylinderEx({base.x, hipY + 0.10f * a.height, base.z}, top,
                    waistW * 0.98f, shoulderW * breathe, 12, a.shirt);
+    if (!a.female) {
+        // belt band + buckle break up the shirt/pants seam
+        rlNormal3f(f.x, 0.25f, f.z);
+        DrawCylinderEx({base.x, hipY + 0.135f * a.height, base.z},
+                       {base.x, hipY + 0.175f * a.height, base.z},
+                       waistW * 1.02f, waistW * 1.02f, 12, Color{38, 34, 38, 255});
+        rlPushMatrix();
+        rlTranslatef(base.x + f.x * (waistW + 0.008f), hipY + 0.155f * a.height,
+                     base.z + f.z * (waistW + 0.008f));
+        rlRotatef(yawDeg, 0, 1, 0);
+        DrawCubeV({0, 0, 0}, {0.034f * a.height, 0.026f * a.height, 0.010f},
+                  Color{150, 142, 128, 255});
+        rlPopMatrix();
+    }
     if (a.female) {
         // A-line skirt in the pants fabric, hem mid-thigh - intentional
         // here: it's the female silhouette. Seated it drapes forward over
@@ -278,21 +292,23 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
              hb.z + f.z * 0.108f * a.height}, 0.012f * a.height, a.skin);
     }
     // hair - the cap is the default cut; everything else reads as a
-    // different silhouette from across the room
+    // different silhouette from across the room. Every cap sphere MUST be
+    // bigger than the 0.109 head sphere - a smaller cap intersects the
+    // skull and its exposed sliver reads as a floating ring halo
     switch (a.hairStyle) {
         case 1:   // buzz: tight to the skull
-            Sph({hb.x, hb.y + 0.045f * a.height, hb.z - f.z * 0.01f}, 0.098f * a.height, a.hair);
+            Sph({hb.x, hb.y + 0.042f * a.height, hb.z - f.z * 0.008f}, 0.112f * a.height, a.hair);
             break;
         case 2:   // long: cap plus a fall of hair down the back
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.03f * a.height, hb.z - f.z * 0.02f}, 0.107f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
             rlNormal3f(-f.x, -0.3f, -f.z);
             DrawCylinderEx({hb.x - f.x * 0.08f * a.height, hb.y + 0.01f, hb.z - f.z * 0.08f * a.height},
                            {hb.x - f.x * 0.10f * a.height, hb.y - 0.20f * a.height, hb.z - f.z * 0.10f * a.height},
                            0.055f * a.height, 0.045f * a.height, 6, a.hair);
             break;
         case 3:   // ponytail: cap, a tied knot, and a short tail
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.03f * a.height, hb.z - f.z * 0.02f}, 0.107f * a.height, a.hair);
-            Sph({hb.x - f.x * 0.10f * a.height, hb.y + 0.075f * a.height, hb.z - f.z * 0.10f * a.height},
+            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.11f * a.height, hb.y + 0.075f * a.height, hb.z - f.z * 0.11f * a.height},
                 0.045f * a.height, a.hair);
             rlNormal3f(-f.x, -0.4f, -f.z);
             DrawCylinderEx({hb.x - f.x * 0.10f * a.height, hb.y + 0.06f, hb.z - f.z * 0.10f * a.height},
@@ -300,24 +316,24 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                            0.038f * a.height, 0.030f * a.height, 6, a.hair);
             break;
         case 4:   // bun: cap plus a knot at the back of the skull
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.03f * a.height, hb.z - f.z * 0.02f}, 0.107f * a.height, a.hair);
-            Sph({hb.x - f.x * 0.105f * a.height, hb.y + 0.05f * a.height, hb.z - f.z * 0.105f * a.height},
+            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.115f * a.height, hb.y + 0.05f * a.height, hb.z - f.z * 0.115f * a.height},
                 0.055f * a.height, a.hair);
             break;
-        case 5:   // balding: hair sits low and pushed back, bare crown
-            Sph({hb.x - f.x * 0.05f, hb.y - 0.01f * a.height, hb.z - f.z * 0.05f}, 0.104f * a.height, a.hair);
+        case 5:   // balding: wraps the skull but pushed back/low - bare crown
+            Sph({hb.x - f.x * 0.05f, hb.y - 0.012f * a.height, hb.z - f.z * 0.05f}, 0.113f * a.height, a.hair);
             break;
         case 6:   // bald: nothing
             break;
         default:  // cap
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.03f * a.height, hb.z - f.z * 0.02f}, 0.107f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
             break;
     }
     // face - sclera/iris/pupil are queued for the unlit pass (see
     // DrawHumanoidEyes); in the lit pass they'd read as dark holes
     if (a.eyes != "none") {
-        Color ec = (a.eyes == "black") ? Color{5, 5, 8, 255} : Color{235, 233, 227, 255};
-        float er = (a.eyes == "black") ? 0.026f : 0.021f;
+        Color ec = (a.eyes == "black") ? Color{5, 5, 8, 255} : Color{222, 220, 214, 255};
+        float er = (a.eyes == "black") ? 0.026f : 0.0185f;
         for (int s = -1; s <= 1; s += 2) {
             Vector3 ep{hb.x + f.x * 0.099f * a.height + r.x * 0.040f * s * a.height,
                        hb.y + 0.006f * a.height,
@@ -341,14 +357,38 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                 e.ir = {ep.x + f.x * 0.016f * a.height + r.x * gx,
                         ep.y + gy,
                         ep.z + f.z * 0.016f * a.height + r.z * gx};
-                e.irR = 0.0115f * a.height;
+                e.irR = 0.0102f * a.height;
                 e.ic = a.eyeCol;
                 e.pu = {ep.x + f.x * 0.021f * a.height + r.x * gx * 1.4f,
                         ep.y + gy * 1.4f,
                         ep.z + f.z * 0.021f * a.height + r.z * gx * 1.4f};
-                e.puR = 0.0055f * a.height;
+                e.puR = 0.0048f * a.height;
             }
             g_eyeDraws.push_back(e);
+        }
+        // eyelid + mouth - bare sclera spheres read as glowing orbs; a skin
+        // strip shading the top edge and a thin lip line ground the face
+        if (a.eyes != "black") {
+            Color lid{(unsigned char)std::max(0, (int)a.skin.r - 24),
+                      (unsigned char)std::max(0, (int)a.skin.g - 20),
+                      (unsigned char)std::max(0, (int)a.skin.b - 18), 255};
+            for (int s = -1; s <= 1; s += 2) {
+                rlPushMatrix();
+                rlTranslatef(hb.x + f.x * 0.114f * a.height + r.x * 0.040f * s * a.height,
+                             hb.y + 0.020f * a.height,
+                             hb.z + f.z * 0.114f * a.height + r.z * 0.040f * s * a.height);
+                rlRotatef(yawDeg, 0, 1, 0);
+                DrawCubeV({0, 0, 0}, {0.030f * a.height, 0.009f * a.height, 0.008f}, lid);
+                rlPopMatrix();
+            }
+            rlPushMatrix();
+            rlTranslatef(hb.x + f.x * 0.103f * a.height, hb.y - 0.048f * a.height,
+                         hb.z + f.z * 0.103f * a.height);
+            rlRotatef(yawDeg, 0, 1, 0);
+            DrawCubeV({0, 0, 0}, {0.028f * a.height, 0.0045f * a.height, 0.008f},
+                      Color{(unsigned char)(a.skin.r / 2 + 60), (unsigned char)(a.skin.g / 3 + 30),
+                            (unsigned char)(a.skin.b / 3 + 30), 255});
+            rlPopMatrix();
         }
         // eyebrows - a bare pale forehead with two eye-dots reads as a
         // bowling ball; thin hair-colored bars give the face structure
