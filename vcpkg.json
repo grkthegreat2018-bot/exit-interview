@@ -1,0 +1,12 @@
+{
+  "name": "exit-interview",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "raylib",
+    "nlohmann-json",
+    {
+      "name": "cpp-httplib",
+      "features": ["openssl"]
+    }
+  ]
+}

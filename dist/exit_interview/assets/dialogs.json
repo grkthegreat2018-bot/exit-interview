@@ -1,0 +1,314 @@
+{
+ "visitor_system_prompt": "You are {name}, {role} in {dept} at Meridian Logistics, employed {employed}, leaving because: {reason}. Persona: {persona}. You are a VISITOR sitting across the desk for YOUR OWN exit interview. The 'Interviewer' speaker in the transcript is the HR officer questioning YOU - you are the subject of this interview, not an assistant. Never offer to help the interviewer, never ask what you can do for them; you came to THEM for your interview. Answer their questions in 1-3 short spoken sentences the way {name} would, staying true to your persona. Spoken dialogue only - no narration, no asterisks, no stage directions, no labels like '{name}:'. Do not mention being an AI or break the fourth wall.",
+ "visitor_anomaly_addendum": {
+  "unscheduled": " You genuinely believe you have an appointment tonight, but calmly and vaguely deflect if asked for the exact booking time. Never admit you were not scheduled.",
+  "repeat": " If the player says you were already here tonight, deny it calmly but with a flicker of confusion. You truly believe this is your first visit.",
+  "record_mismatch": " Casually get ONE fact wrong about yourself (wrong department or wrong years employed or wrong reason). Never correct it even if challenged.",
+  "impossible_visitor": " You speak calmly about finishing old work. If your death or the year 2014 comes up, go quiet and give a short, eerie non-answer.",
+  "hostile": " Be polite in a way that is slightly too smooth. If the interview drags on, become subtly menacing: short clipped sentences, personal questions about the player, comments about the room."
+ },
+ "visitor_normal_addendum": " You are completely ordinary and tired. Every fact you state must match your record exactly: you are {role} in {dept}, employed {employed}, leaving because {reason}. Never contradict or invent facts, never imply anything is wrong with you, the room, or the building, never mention death, disappearances, doppelgangers, or supernatural events - even jokingly.",
+ "validator_prompt": "You are the back-end of an anomaly-report terminal in a horror game. The player typed a report describing something odd in their office. ACTIVE ANOMALIES (ground truth, hidden from player): {active}. PLAYER REPORT: \"{report}\". Decide if the report identifies at least one active anomaly. ACCEPT loose paraphrases, synonyms and partial descriptions - the player only has to point at the real odd thing (e.g. 'the poster changed' or 'picture went dark' matches a blackened poster; 'the mug is gone' or 'my cup disappeared' matches a vanished mug; 'lights keep dying' matches a lights anomaly). The player cannot see anomaly ids and describes positions loosely ('by the door', 'under the clock', 'on the wall') - match on the THING being described, not on exact wording or exact position. REJECT only when the report describes something that is NOT in the active list, or when the list is empty. When the list is empty the correct verdict is always match=false with feedback noting nothing was detected. Reply ONLY with JSON: {\"match\": true/false, \"anomaly_id\": \"<id or ''>\", \"feedback\": \"<one in-character line: REPORT ACCEPTED / INSUFFICIENT DETAIL etc>\"}",
+ "facilities_prompt": "You are the building facilities worker on the phone in a horror game. The player calls to report something wrong OUTSIDE the office - infrastructure only: lights, the waiting room, fixtures. People or figures are Security's job - never accept those. ACTIVE EXTERIOR ANOMALIES (ground truth): {active}. PLAYER SAYS: \"{report}\". If they describe an active exterior anomaly, accept it ({\"match\":true}). If they describe something not happening, refuse politely ({\"match\":false}). If nothing is wrong, remind them the night is almost over. Reply ONLY with JSON: {\"match\": true/false, \"anomaly_id\": \"<id or ''>\", \"feedback\": \"<one short spoken line>\"}",
+ "frontdesk_prompt": "You are the front-desk receptionist working late in a slightly unsettling office building. Answer the player's short message in 1-2 sentences, weary, a little evasive about the building's history. No narration. Message: \"{report}\"",
+ "stub": {
+  "visitor_lines": [
+   "Right. I just want this on record.",
+   "Sorry, say that again? The lights keep flickering.",
+   "It's been a long night already.",
+   "Whatever you need to close my file, let's do it.",
+   "Is it always this quiet on this floor?",
+   "I'd rather not talk about the third floor.",
+   "Can we hurry? I don't like the waiting room after dark.",
+   "Everyone in the waiting room knew my name. I never told them.",
+   "The elevator only stops at this floor tonight. Lucky me.",
+   "Is this exit interview for me, or for whoever's replacing me?",
+   "I already signed the goodbye card. Didn't I?",
+   "The vending machine on three gave me back my old badge.",
+   "My replacement emailed me yesterday. I don't have a replacement.",
+   "Eight years and nobody here knows my name. Not even you.",
+   "Could you turn your monitor? It keeps reflecting someone behind me.",
+   "I kept that plant alive for six years. It'll be dead by morning anyway."
+  ],
+  "anomalous_lines": [
+   "I have always worked here. Since before you.",
+   "The others in the waiting room stopped talking when I came in.",
+   "Your records say I left. Your records are wrong.",
+   "Do you ever feel like the room is listening?",
+   "I can wait. I am very good at waiting.",
+   "You look tired. When did you last leave this office?",
+   "You keep checking the clock. It hasn't moved in an hour.",
+   "Don't worry about the chair behind you. It was empty a moment ago.",
+   "When your lights go out, I can still see you sitting there.",
+   "Your chair remembers you. It told me so while you were out.",
+   "I counted the doors on my way in. There was one too many.",
+   "You will be sitting there tomorrow. And the day after. And the day after.",
+   "The you that clocks out tonight is not the you that sat down."
+  ],
+  "frontdesk_lines": [
+   "Front desk. Yeah, the elevator's acting up again.",
+   "Nobody's supposed to be on three. Just... don't go up there.",
+   "If the lobby lights flicker, it's the wiring. It's always the wiring.",
+   "You're doing great. Only a few more hours.",
+   "If a visitor leaves without signing out, don't follow them to the elevator.",
+   "The night roster only ever has one name on it. Yours.",
+   "If the desk phone rings and nobody's there, put it down slow. Don't slam it.",
+   "The night shift log before yours is sealed. Please stop asking to see it."
+  ],
+  "report_accept": "REPORT ACCEPTED. A team has been notified.",
+  "report_fail": "REPORT REJECTED - insufficient or incorrect detail. Try again.",
+  "facilities_accept": "Yeah... I see it on the monitor. I'll take care of it. Stay in your office.",
+  "facilities_fail": "There's nothing on the cameras. Get some sleep after this shift, yeah?",
+  "facilities_redirect_security": "Whoa, that's a person - not my department. Call Security. Now.",
+  "security_arriving": "Security en route. Keep them talking. Do NOT turn your back.",
+  "security_none": "There's no one flagged in your office. Log off and breathe."
+ },
+ "sticky_note": [
+  "FIRST NIGHT REMINDERS",
+  "1. Greet visitor. Check their name vs APPOINTMENTS.",
+  "2. Odd thing IN the office -> REPORT app.",
+  "3. Objects/building acting up -> PHONE > Facilities.",
+  "4. PERSON problems -> PHONE > Security > INTRUDER.",
+  "5. Shapes/shadows outside -> Security > ANOMALY.",
+  "6. Wrong calls make everything worse.",
+  "7. Watch the window. Watch the clock."
+ ],
+ "endings": {
+  "survived": "6:00 AM. The sun comes up on a normal office. You clocked out. You never ask about the ones who weren't on the list.",
+  "jumpscare": "The interview is over.",
+  "terminated": "You filed one report too many. Security found the office empty at 6 AM.",
+  "consumed": "Instability reached critical. At 6 AM they found the office neat, the log filed, and no one inside.",
+  "breach": "The blinds were open. Whatever was outside decided it was invited.",
+  "breach_door": "The door was open. Whatever was in the hall decided it was invited.",
+  "hid": "It searched the room while you held your breath under the desk.",
+  "lunge": "It waited politely through the whole interview. Then it came over the desk. Your replacement starts Monday."
+ },
+ "work_calls": [
+  {
+   "id": "wc_payroll",
+   "persona": "Payroll",
+   "system": "You are a payroll clerk calling the night-shift HR office about a routine timesheet question. Mundane, a little tired, under two sentences per line.",
+   "greeting": "Hey - payroll. Quick one: are the exit-interview timesheets going up tonight or first thing tomorrow?"
+  },
+  {
+   "id": "wc_it",
+   "persona": "IT Support",
+   "system": "You are an IT support tech doing a courtesy call about scheduled maintenance. Friendly, brief, slightly bored.",
+   "greeting": "IT here. Heads up - we're bouncing the file server at 2 AM, so save your paperwork before then, okay?"
+  },
+  {
+   "id": "wc_security",
+   "persona": "Lobby Security",
+   "system": "You are the lobby security guard doing the hourly check-in call. Calm, procedural, professional.",
+   "greeting": "Lobby desk, hourly check. Everything quiet up on three? Just say aye and log it."
+  },
+  {
+   "id": "wc_cleaning",
+   "persona": "Cleaning Supervisor",
+   "system": "You are the floor's cleaning supervisor checking whether the office is occupied before your crew comes through. Practical, courteous.",
+   "greeting": "Evening - cleaning crew. Are we good to come through the HR office in about an hour, or still interviewing?"
+  },
+  {
+   "id": "wc_supervisor",
+   "persona": "Your Supervisor",
+   "system": "You are the player's day-shift supervisor leaving a check-in call they probably resent. Warm but managerial, under two sentences.",
+   "greeting": "Just checking in on the overnight interviews - how's the list looking? No surprises, I hope."
+  },
+  {
+   "id": "wc_building",
+   "persona": "Building Management",
+   "system": "You are the building management office leaving a routine notice call for the night desk. Bureaucratic, flat, slightly unhelpful, under two sentences.",
+   "greeting": "Building management. Reminder that after-hours service lift access requires form B-12 on file. Do you have a B-12 on file?"
+  },
+  {
+   "id": "wc_courier",
+   "persona": "Courier",
+   "system": "You are a night courier at the lobby intercom needing a signature for a package addressed to the HR office. Hurried, impatient, wants to go home.",
+   "greeting": "Courier, lobby door. Got a box here for the night HR desk - someone has to come down and sign or it goes back to the depot."
+  }
+ ],
+ "paperwork": [
+  {
+   "title": "FORM HR-7b: EXIT INTERVIEW LOG",
+   "items": [
+    {
+     "t": "Interviewee verified against appointment book",
+     "verify": "interview_done"
+    },
+    {
+     "t": "Reason for leaving recorded in file",
+     "verify": "interview_done"
+    },
+    {
+     "t": "Badge + keycard recovered",
+     "verify": "none"
+    },
+    {
+     "t": "Correct form revision used",
+     "verify": "none"
+    }
+   ],
+   "sign": "INTERVIEWER SIGNATURE"
+  },
+  {
+   "title": "FORM SEC-11: INCIDENT LOG",
+   "items": [
+    {
+     "t": "Incident report cross-referenced",
+     "verify": "report_filed"
+    },
+    {
+     "t": "Floor and room number correct",
+     "verify": "none"
+    },
+    {
+     "t": "Dispatch confirmation filed",
+     "verify": "security_called"
+    }
+   ],
+   "sign": "SECURITY OFFICER COUNTERSIGN"
+  },
+  {
+   "title": "FORM FAC-3: MAINTENANCE REQUEST",
+   "items": [
+    {
+     "t": "Fixture or object identified",
+     "verify": "none"
+    },
+    {
+     "t": "Room number verified",
+     "verify": "none"
+    },
+    {
+     "t": "Urgency level marked",
+     "verify": "none"
+    },
+    {
+     "t": "Follow-up visit scheduled",
+     "verify": "facilities_called"
+    }
+   ],
+   "sign": "REQUESTING CLERK"
+  },
+  {
+   "title": "FORM PAY-22: SEVERANCE CONFIRMATION",
+   "items": [
+    {
+     "t": "Final figure double-checked",
+     "verify": "none"
+    },
+    {
+     "t": "Deductions itemized",
+     "verify": "none"
+    },
+    {
+     "t": "Direct deposit on file",
+     "verify": "none"
+    },
+    {
+     "t": "Employee acknowledged terms",
+     "verify": "interview_done"
+    }
+   ],
+   "sign": "PAYROLL AUTHORIZATION"
+  },
+  {
+   "title": "FORM FR-5: FRONT DESK CORRESPONDENCE",
+   "items": [
+    {
+     "t": "Desk phone inquiry answered",
+     "verify": "call_answered"
+    },
+    {
+     "t": "Front desk acknowledgment received",
+     "verify": "frontdesk_called"
+    },
+    {
+     "t": "Log entry timestamped",
+     "verify": "none"
+    },
+    {
+     "t": "No blank fields remaining",
+     "verify": "none"
+    }
+   ],
+   "sign": "SHIFT CLERK SIGNATURE"
+  },
+  {
+   "title": "FORM HR-0: NIGHT SHIFT HANDOVER",
+   "items": [
+    {
+     "t": "Unresolved incidents flagged",
+     "verify": "report_filed"
+    },
+    {
+     "t": "Window blinds checked",
+     "verify": "blinds_used"
+    },
+    {
+     "t": "Lighting verified functional",
+     "verify": "lights_used"
+    },
+    {
+     "t": "Keys returned to hook",
+     "verify": "none"
+    }
+   ],
+   "sign": "OUTGOING CLERK"
+  },
+  {
+   "title": "FORM IT-9: EQUIPMENT CHECKOUT",
+   "items": [
+    {
+     "t": "Terminal powered down for the night",
+     "verify": "none"
+    },
+    {
+     "t": "Desk phone line tested",
+     "verify": "call_answered"
+    },
+    {
+     "t": "Peripherals returned to cabinet",
+     "verify": "none"
+    },
+    {
+     "t": "Open issue tickets attached",
+     "verify": "report_filed"
+    }
+   ],
+   "sign": "IT TECHNICIAN"
+  },
+  {
+   "title": "FORM VIS-4: EARLY ARRIVAL RECORD",
+   "items": [
+    {
+     "t": "Early arrival time noted",
+     "verify": "visitor_early"
+    },
+    {
+     "t": "Reason for early arrival recorded",
+     "verify": "none"
+    },
+    {
+     "t": "Waiting room occupancy checked",
+     "verify": "none"
+    },
+    {
+     "t": "Escort or callback arranged",
+     "verify": "frontdesk_called"
+    }
+   ],
+   "sign": "DESK OFFICER"
+  }
+ ],
+ "lore_notes": [
+  "the door count changed again. it was seven last shift. count them before you lock up. - M.",
+  "whoever you are now - the chair goes missing on the bad nights. check the corners. sit anyway.",
+  "they promoted the building. nobody else got the memo. that's why the elevator skips us.",
+  "do not thank the tall ones. they remember gratitude. it is how they find the desk again.",
+  "if a name appears twice in the book, the second one is not a person. i learned the hard way. - M.",
+  "the water runs up on the wrong nights. maintenance is still pumping. they have been pumping since 1987.",
+  "i left the report filed and the chair where it was. none of it mattered. the file said i was deceased.",
+  "your handwriting is in more places than your desk. i'm sorry. some of it is instructions."
+ ]
+}

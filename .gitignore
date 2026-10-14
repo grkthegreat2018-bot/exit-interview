@@ -1,0 +1,21 @@
+# build outputs
+build/
+build-*/
+out/
+x64/
+.vs/
+*.user
+
+# runtime state (lives next to the exe - per-machine, never shipped)
+settings.json
+save.json
+ei_profile.json
+run.log
+shots/
+*.png
+
+# music synth intermediates
+.devin/musictmp/
+
+# vcpkg local install if it lands in-tree
+vcpkg_installed/

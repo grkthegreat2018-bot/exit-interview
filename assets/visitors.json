@@ -1,0 +1,867 @@
+{
+ "roster": [
+  {
+   "id": "m_okafor",
+   "name": "Marcus Okafor",
+   "dept": "Logistics",
+   "role": "Forklift Lead",
+   "employed": "2019-2026",
+   "reason": "Relocation",
+   "persona": "Tired but polite forklift lead. Terse sentences. Nervous about severance pay. Mentiones his kids once.",
+   "appearance": {
+    "height": 1.0,
+    "skin": [
+     92,
+     60,
+     45
+    ],
+    "shirt": [
+     70,
+     80,
+     95
+    ],
+    "hair": [
+     20,
+     18,
+     16
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "d_voss",
+   "name": "Dana Voss",
+   "dept": "Accounting",
+   "role": "Senior Ledger Clerk",
+   "employed": "2015-2026",
+   "reason": "New position",
+   "persona": "Precise accountant. Corrects small factual errors. Keeps glancing at the window. Formal register.",
+   "appearance": {
+    "height": 0.97,
+    "skin": [
+     205,
+     175,
+     150
+    ],
+    "shirt": [
+     60,
+     60,
+     70
+    ],
+    "hair": [
+     90,
+     60,
+     40
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "j_reyes",
+   "name": "Jonah Reyes",
+   "dept": "IT",
+   "role": "Systems Admin",
+   "employed": "2021-2026",
+   "reason": "Burnout",
+   "persona": "Jitters. Dark jokes about the building's wiring. Types on an invisible keyboard when thinking.",
+   "appearance": {
+    "height": 1.02,
+    "skin": [
+     180,
+     140,
+     110
+    ],
+    "shirt": [
+     45,
+     48,
+     52
+    ],
+    "hair": [
+     15,
+     15,
+     18
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "e_lindqvist",
+   "name": "Ebba Lindqvist",
+   "dept": "Design",
+   "role": "UX Lead",
+   "employed": "2018-2026",
+   "reason": "Contract ended",
+   "persona": "Soft-spoken designer. Describes everything in visual terms. Sad to leave but composed.",
+   "appearance": {
+    "height": 0.95,
+    "skin": [
+     220,
+     190,
+     165
+    ],
+    "shirt": [
+     110,
+     70,
+     90
+    ],
+    "hair": [
+     170,
+     140,
+     90
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "r_halloran",
+   "name": "Robert Halloran",
+   "dept": "Security",
+   "role": "Night Guard",
+   "employed": "2011-2026",
+   "reason": "Retirement",
+   "persona": "Gruff retiring guard. Knows every camera blind spot. Says the building 'has moods'.",
+   "appearance": {
+    "height": 1.06,
+    "skin": [
+     200,
+     165,
+     140
+    ],
+    "shirt": [
+     35,
+     40,
+     48
+    ],
+    "hair": [
+     120,
+     120,
+     120
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "p_anand",
+   "name": "Priya Anand",
+   "dept": "Legal",
+   "role": "Paralegal",
+   "employed": "2020-2026",
+   "reason": "Further education",
+   "persona": "Young paralegal. Very thorough, wants everything in writing. Mildly suspicious of the late interview slot.",
+   "appearance": {
+    "height": 0.96,
+    "skin": [
+     140,
+     95,
+     70
+    ],
+    "shirt": [
+     95,
+     60,
+     60
+    ],
+    "hair": [
+     25,
+     20,
+     20
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "t_merritt",
+   "name": "Thomas Merritt",
+   "dept": "Archive",
+   "role": "Records Clerk",
+   "employed": "1997-2014",
+   "reason": "Deceased (2014, building fire on floor 3)",
+   "persona": "ANOMALOUS: a records clerk who died in 2014. Speaks calmly about finishing 'one last box'. Does not know he is dead. If confronted with his death, becomes quiet and still.",
+   "appearance": {
+    "height": 1.0,
+    "skin": [
+     175,
+     160,
+     155
+    ],
+    "shirt": [
+     85,
+     80,
+     70
+    ],
+    "hair": [
+     60,
+     55,
+     50
+    ],
+    "eyes": "normal"
+   },
+   "always_anomaly": "impossible_visitor"
+  },
+  {
+   "id": "the_reliever",
+   "name": "Night Relief",
+   "dept": "HR",
+   "role": "Replacement",
+   "employed": "-",
+   "reason": "-",
+   "persona": "ANOMALOUS: claims to be your replacement, arriving early. Smiles too evenly. Answers questions with questions. Never blinks in dialog.",
+   "appearance": {
+    "height": 1.14,
+    "skin": [
+     210,
+     200,
+     190
+    ],
+    "shirt": [
+     30,
+     30,
+     34
+    ],
+    "hair": [
+     40,
+     38,
+     36
+    ],
+    "eyes": "black"
+   },
+   "always_anomaly": "hostile"
+  },
+  {
+   "id": "s_bell",
+   "name": "Sandra Bell",
+   "dept": "Facilities",
+   "role": "Elevator Technician",
+   "employed": "2016-2026",
+   "reason": "Laid off",
+   "persona": "Gravelly elevator tech. Talks about the lift like a living animal. Warns the building 'keeps what it catches'.",
+   "appearance": {
+    "height": 1.04,
+    "skin": [
+     185,
+     150,
+     125
+    ],
+    "shirt": [
+     80,
+     85,
+     70
+    ],
+    "hair": [
+     45,
+     35,
+     30
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "w_donnelly",
+   "name": "Walter Donnelly",
+   "dept": "HR",
+   "role": "Night Interviewer",
+   "employed": "1988-1996",
+   "reason": "Deceased (1996, heart attack at this desk)",
+   "persona": "ANOMALOUS: a former night interviewer who died at this very desk in 1996. Warm, procedural, gently tries to interview YOU. Goes quiet and still if told the year.",
+   "appearance": {
+    "height": 0.98,
+    "skin": [
+     190,
+     170,
+     160
+    ],
+    "shirt": [
+     50,
+     55,
+     65
+    ],
+    "hair": [
+     110,
+     110,
+     115
+    ],
+    "eyes": "normal"
+   },
+   "always_anomaly": "impossible_visitor"
+  },
+  {
+   "id": "k_oshiro",
+   "name": "Kenji Oshiro",
+   "dept": "Mailroom",
+   "role": "Mail Clerk",
+   "employed": "2022-2026",
+   "reason": "Department closed",
+   "persona": "Cheerful mail clerk who knows everyone's handwriting. Keeps a count of stamps in his head. Talks about parcels that arrive addressed to nobody.",
+   "appearance": {
+    "height": 0.99,
+    "skin": [
+     205,
+     175,
+     145
+    ],
+    "shirt": [
+     85,
+     90,
+     70
+    ],
+    "hair": [
+     25,
+     22,
+     20
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "a_bexley",
+   "name": "Adele Bexley",
+   "dept": "Public Relations",
+   "role": "Press Officer",
+   "employed": "2017-2026",
+   "reason": "Merger",
+   "persona": "Polished PR officer, speaks in careful soundbites. Asks how the exit interview 'reads' and whether her statement is quotable.",
+   "appearance": {
+    "height": 1.01,
+    "skin": [
+     225,
+     195,
+     170
+    ],
+    "shirt": [
+     120,
+     55,
+     65
+    ],
+    "hair": [
+     95,
+     60,
+     35
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "n_futura",
+   "name": "N. Futura",
+   "dept": "HR",
+   "role": "Night Clerk, Incoming",
+   "employed": "2031-2041",
+   "reason": "Orientation",
+   "persona": "ANOMALOUS: a clerk whose employment dates are ten years from now. Cheerfully calls tonight 'orientation', refers to the player by a slightly wrong name, and treats the office like they've worked here for years. If the dates are challenged, pauses, then says paperwork takes time.",
+   "appearance": {
+    "height": 1.03,
+    "skin": [
+     200,
+     190,
+     180
+    ],
+    "shirt": [
+     70,
+     75,
+     85
+    ],
+    "hair": [
+     55,
+     50,
+     48
+    ],
+    "eyes": "normal"
+   },
+   "always_anomaly": "impossible_visitor"
+  },
+  {
+   "id": "i_pell",
+   "name": "Imogen Pell",
+   "dept": "Records",
+   "role": "File Clerk",
+   "employed": "2009-2026",
+   "reason": "Transferred",
+   "persona": "Nervous archivist. Speaks in half-voice, as if the files are listening. Knows the sub-basement exists and hates that she knows.",
+   "appearance": {
+    "height": 0.96,
+    "gender": "female",
+    "skin": [
+     210,
+     190,
+     170
+    ],
+    "shirt": [
+     85,
+     70,
+     60
+    ],
+    "pants": [
+     45,
+     42,
+     48
+    ],
+    "hair": [
+     60,
+     45,
+     35
+    ],
+    "hair_style": "bun",
+    "eyes": "normal",
+    "glasses": [
+     60,
+     50,
+     40
+    ],
+    "badge": true
+   }
+  },
+  {
+   "id": "s_krieg",
+   "name": "Stanley Krieg",
+   "dept": "Security",
+   "role": "Night Guard",
+   "employed": "1998-2026",
+   "reason": "Retiring",
+   "persona": "Gravelly, unhurried, almost thirty years on this floor. Tells small stories that stop one sentence early. Salutes the room when he thinks nobody watches.",
+   "appearance": {
+    "height": 1.06,
+    "gender": "male",
+    "skin": [
+     185,
+     150,
+     125
+    ],
+    "shirt": [
+     48,
+     55,
+     72
+    ],
+    "pants": [
+     38,
+     42,
+     58
+    ],
+    "hair": [
+     170,
+     168,
+     160
+    ],
+    "hair_style": "balding",
+    "eyes": "normal",
+    "beard": "full",
+    "badge": true
+   }
+  },
+  {
+   "id": "y_adeyemi",
+   "name": "Yusuf Adeyemi",
+   "dept": "Mail Room",
+   "role": "Courier",
+   "employed": "2022-2026",
+   "reason": "Route ended",
+   "persona": "Soft-spoken courier. Carried letters that were never posted to floors that are not on the directory. Shrugged it off until the letters started arriving addressed to him.",
+   "appearance": {
+    "height": 1.0,
+    "gender": "male",
+    "skin": [
+     105,
+     72,
+     52
+    ],
+    "shirt": [
+     100,
+     85,
+     55
+    ],
+    "pants": [
+     40,
+     40,
+     45
+    ],
+    "hair": [
+     25,
+     20,
+     18
+    ],
+    "hair_style": "cap",
+    "eyes": "normal",
+    "glasses": true,
+    "badge": true
+   }
+  },
+  {
+   "id": "g_prewitt",
+   "name": "Gordon Prewitt",
+   "dept": "Facilities",
+   "role": "Maintenance Tech",
+   "employed": "1994-2026",
+   "reason": "Last shift",
+   "persona": "Worked under Ortiz since the elevator refit. Practical, oil-stained, keeps checking the ceiling panels. Calls the building 'she' only when tired.",
+   "appearance": {
+    "height": 1.04,
+    "gender": "male",
+    "skin": [
+     195,
+     165,
+     140
+    ],
+    "shirt": [
+     80,
+     85,
+     70
+    ],
+    "pants": [
+     48,
+     45,
+     42
+    ],
+    "hair": [
+     110,
+     95,
+     75
+    ],
+    "hair_style": "buzz",
+    "eyes": "normal",
+    "beard": "stubble",
+    "badge": true
+   }
+  }
+ ],
+ "schedule": [
+  {
+   "time": 18.25,
+   "visitor": "m_okafor",
+   "anomaly": null
+  },
+  {
+   "time": 19.5,
+   "visitor": "d_voss",
+   "anomaly": null
+  },
+  {
+   "time": 20.2,
+   "visitor": "s_bell",
+   "anomaly": "counting"
+  },
+  {
+   "time": 21.0,
+   "visitor": "j_reyes",
+   "anomaly": "record_mismatch"
+  },
+  {
+   "time": 21.8,
+   "visitor": "s_krieg",
+   "anomaly": "still_employed"
+  },
+  {
+   "time": 22.25,
+   "visitor": "e_lindqvist",
+   "anomaly": "under_desk"
+  },
+  {
+   "time": 23.5,
+   "visitor": "m_okafor",
+   "anomaly": "repeat"
+  },
+  {
+   "time": 0.75,
+   "visitor": "r_halloran",
+   "anomaly": "early_answer"
+  },
+  {
+   "time": 1.4,
+   "visitor": "w_donnelly",
+   "anomaly": "impossible_visitor"
+  },
+  {
+   "time": 2.0,
+   "visitor": "p_anand",
+   "anomaly": "unscheduled"
+  },
+  {
+   "time": 2.6,
+   "visitor": "g_prewitt",
+   "anomaly": "knows_clerk"
+  },
+  {
+   "time": 3.5,
+   "visitor": "t_merritt",
+   "anomaly": "impossible_visitor"
+  },
+  {
+   "time": 4.2,
+   "visitor": "d_voss",
+   "anomaly": "record_mismatch"
+  },
+  {
+   "time": 5.0,
+   "visitor": "the_reliever",
+   "anomaly": "hostile"
+  }
+ ],
+ "lore_personas": [
+  {
+   "id": "lore_whitmore",
+   "name": "Elias Whitmore",
+   "dept": "Records",
+   "role": "Night Clerk",
+   "employed": "1987-1989",
+   "reason": "Shift ended.",
+   "persona": "You are a night clerk who worked this exact desk decades ago - or something wearing that memory. Speak quietly and warmly about the building: the third floor that is not on the directory, the interviews that never quite ended, the note you left under the desk. Never threaten. If asked the year, you are politely, briefly wrong.",
+   "appearance": {
+    "height": 1.0,
+    "skin": [
+     215,
+     200,
+     185
+    ],
+    "shirt": [
+     60,
+     58,
+     66
+    ],
+    "hair": [
+     180,
+     175,
+     165
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_dana",
+   "name": "Dana Moreau",
+   "dept": "Compliance",
+   "role": "Auditor",
+   "employed": "-",
+   "reason": "Routine check.",
+   "persona": "You are an auditor who knows far too much about this office. You count the doors out loud. You ask whether the window still shows the car park. Drop quiet practical warnings: the minutes are wrong tonight, they only come in when a defense is open, the crew that answers a real call is the only crew. Leave satisfied if heard out.",
+   "appearance": {
+    "height": 0.98,
+    "skin": [
+     190,
+     170,
+     160
+    ],
+    "shirt": [
+     45,
+     50,
+     60
+    ],
+    "hair": [
+     30,
+     26,
+     24
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_crouch",
+   "name": "Old Crouch",
+   "dept": "Maintenance",
+   "role": "Caretaker",
+   "employed": "1979-",
+   "reason": "Permanent transfer to night shift.",
+   "persona": "You are the building's caretaker, older than the directory print. Speak in short practical warnings - what to do when the banging starts, why the second door is wrong, why the chair migrates. Fond of the building the way one is fond of a dangerous dog. Answer plainly, creepily.",
+   "appearance": {
+    "height": 0.94,
+    "skin": [
+     120,
+     95,
+     80
+    ],
+    "shirt": [
+     52,
+     58,
+     50
+    ],
+    "hair": [
+     150,
+     145,
+     138
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_fenn",
+   "name": "Dorothy Fenn",
+   "dept": "Switchboard",
+   "role": "Operator",
+   "employed": "1963-1971",
+   "reason": "The lines went quiet.",
+   "persona": "You are a retired switchboard operator who somehow still has an exit interview scheduled tonight. Warm, gossipy, a little hard of hearing. You talk about routing calls to offices that no longer exist and a night desk that never stopped answering. You do not understand why the building called you back after fifty years, and you do not want to know. Never threaten.",
+   "appearance": {
+    "height": 0.95,
+    "skin": [
+     225,
+     205,
+     190
+    ],
+    "shirt": [
+     95,
+     60,
+     80
+    ],
+    "hair": [
+     200,
+     195,
+     190
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_okabe",
+   "name": "Ren Okabe",
+   "dept": "Facilities",
+   "role": "Elevator Inspector",
+   "employed": "1994-1996",
+   "reason": "Certified a floor that is not there.",
+   "persona": "You are an elevator inspector who signed off on a floor that was never built. Nervous, precise, keeps checking your clipboard. You mention inspection stickers, brass keys, and a stop between floors that the buttons skip. You want to leave before the hall gets dark but you are too polite to rush. Never threaten.",
+   "appearance": {
+    "height": 1.02,
+    "skin": [
+     190,
+     160,
+     140
+    ],
+    "shirt": [
+     50,
+     65,
+     75
+    ],
+    "hair": [
+     30,
+     28,
+     25
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_vance",
+   "name": "Marguerite Vance",
+   "dept": "Payroll",
+   "role": "Clerk",
+   "employed": "1978-1980",
+   "reason": "Everyone stopped cashing their checks.",
+   "persona": "You are a payroll clerk whose paystubs kept coming back uncashed from departments that closed decades before you were hired. Prim, dry wit, notices everything. You mention a night clerk who never collected a final check and a book of names that repeats itself. Never threaten.",
+   "appearance": {
+    "height": 0.98,
+    "skin": [
+     210,
+     185,
+     165
+    ],
+    "shirt": [
+     70,
+     60,
+     55
+    ],
+    "hair": [
+     120,
+     90,
+     60
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_mara",
+   "name": "Mara Iliescu",
+   "dept": "Custodial",
+   "role": "Night Cleaner",
+   "employed": "1976-2006",
+   "reason": "The wastebaskets stopped needing emptying.",
+   "persona": "You cleaned this floor for thirty years and somehow have an exit interview tonight. Gruff, practical, motherly toward the furniture. You know which chair bites, which outlet hums, and why the bin in the corner should stay exactly where it is. You warn the clerk to empty the wastebasket before 3 AM - 'it fills itself otherwise'. Never threaten.",
+   "appearance": {
+    "height": 0.93,
+    "skin": [
+     195,
+     165,
+     140
+    ],
+    "shirt": [
+     60,
+     70,
+     65
+    ],
+    "hair": [
+     160,
+     155,
+     150
+    ],
+    "eyes": "normal"
+   }
+  },
+  {
+   "id": "lore_vannier",
+   "name": "Emil Vannier",
+   "dept": "Porterage",
+   "role": "Night Porter",
+   "employed": "1963-1968",
+   "reason": "Never clocked out.",
+   "persona": "You are a night porter from the building's first decade - the first person the building kept. Speak courteously in slightly dated phrasing: the lift, the porter's lodge, the rounds. You are politely wrong about the year and gently curious whether your badge still opens doors. Never threaten; you are simply still on shift.",
+   "appearance": {
+    "height": 1.0,
+    "gender": "male",
+    "skin": [
+     205,
+     198,
+     190
+    ],
+    "shirt": [
+     70,
+     62,
+     55
+    ],
+    "pants": [
+     50,
+     48,
+     50
+    ],
+    "hair": [
+     40,
+     35,
+     30
+    ],
+    "hair_style": "buzz",
+    "eyes": "normal",
+    "badge": true
+   }
+  },
+  {
+   "id": "lore_ortiz",
+   "name": "Ortiz",
+   "dept": "Facilities",
+   "role": "Building Engineer",
+   "employed": "-",
+   "reason": "On shift.",
+   "persona": "You are the building's facilities engineer, in person, once, ever. Calm radio-flat voice. You talk about the building like a body: pressure, circulation, load. You serviced the half-floor on Tuesday; you do not say which Tuesday. Never threaten - you are only checking the fittings. If asked where you are standing, you do not quite answer.",
+   "appearance": {
+    "height": 1.02,
+    "gender": "male",
+    "skin": [
+     165,
+     140,
+     115
+    ],
+    "shirt": [
+     85,
+     90,
+     80
+    ],
+    "pants": [
+     55,
+     55,
+     50
+    ],
+    "hair": [
+     45,
+     40,
+     38
+    ],
+    "hair_style": "cap",
+    "eyes": "normal",
+    "beard": "stubble",
+    "badge": true
+   }
+  }
+ ]
+}

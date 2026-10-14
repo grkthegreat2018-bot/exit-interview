@@ -1,0 +1,3426 @@
+#include "game.h"
+#include <rlgl.h>
+#include "hud.h"
+#include <cstdlib>
+#include <cstring>
+
+static std::string ReplaceAll(std::string s, const std::string& a, const std::string& b) {
+    size_t p = 0;
+    while ((p = s.find(a, p)) != std::string::npos) { s.replace(p, a.size(), b); p += b.size(); }
+    return s;
+}
+
+// verify keys the paperwork parser accepts - everything else becomes "none".
+// Each maps to a real in-game deed; checking a box for something you never did
+// is refused, so forms can't be faked for the instability freeze.
+static const std::map<std::string, std::string> VERIFY_REQ = {
+    {"interview_done", "finish an interview"},
+    {"report_filed", "file an accepted anomaly report"},
+    {"call_answered", "answer the desk phone"},
+    {"security_called", "dispatch security"},
+    {"facilities_called", "dispatch facilities"},
+    {"frontdesk_called", "contact the front desk"},
+    {"blinds_used", "use the window blinds"},
+    {"lights_used", "use the light switch"},
+    {"visitor_early", "call a visitor in early"},
+};
+
+bool Game::Init() {
+    if (!A.Load("assets")) return false;
+    office.Load(A.office, Cfg());
+    json g = Cfg()["game"];
+    sens = JF(g, "mouse_sensitivity", 0.12f);
+    player.height = JF(g, "player_height", 1.62f);
+    player.radius = JF(g, "player_radius", 0.32f);
+    player.speed = JF(g, "walk_speed", 3.1f);
+    gameHour = JF(g, "shift_start_hour", 18.f);
+
+    Vector3 sp = JV3(A.office["player_spawn"]["pos"]);
+    player.pos = sp;
+    player.yaw = JF(A.office["player_spawn"], "yaw", 180);
+
+    vs.Init(A.visitors, Cfg()["visitor"]);
+    ad.Init(A.anomalies, Cfg()["instability"]);
+    ad.SetParts(A.anomalyParts);
+    ad.seenFn = [this](Vector3 p) { return PlayerSees(p); };
+    audio.Init();
+
+    cam.up = {0.f, 1.f, 0.f};
+    cam.fovy = JF(g, "fov", 68);
+    fovBase = cam.fovy;
+    cam.projection = CAMERA_PERSPECTIVE;
+    cam.position = player.Eye();
+    cam.target = {0.f, 1.4f, 0.f};
+
+    osTex = LoadRenderTexture(1248, 768);
+    osTexOk = osTex.id != 0;
+    if (osTexOk) SetTextureFilter(osTex.texture, TEXTURE_FILTER_BILINEAR);
+
+    fx.Init(JF(g, "render_scale", 1.25f));
+    CollectLights();
+
+    // LLM setup: env key wins, otherwise use saved settings
+    const char* env = std::getenv(JS(Cfg()["llm"], "api_key_env", "GROQ_API_KEY").c_str());
+    if (env && *env) apiKey = env;
+    LoadSettings();
+    ApplyProvider();
+    llm.Start(JI(Cfg()["llm"], "worker_threads", 2));
+
+    // fake OS callbacks
+    os.getAppointments = [this] { return AppointmentsLines(); };
+    os.getRecord = [this] { return RecordLines(); };
+    os.onSubmitReport = [this](const std::string& t) { SubmitReport(t); };
+    os.onCallSecurity = [this](const std::string& kind) { CallSecurity(kind); };
+    os.onCallFacilities = [this](const std::string& t) { CallFacilities(t); };
+    os.onCallFrontDesk = [this](const std::string& t) { CallFrontDesk(t); };
+    os.onCallNext = [this]() -> std::string {
+        if (vs.HasActiveVisitor()) return "Someone is with you already. Finish that interview first.";
+        if (vs.PendingCount() <= 0) return "Nobody else on the book tonight.";
+        std::string nm = vs.NextName();
+        vs.CallNextEarly(office);
+        deeds["visitor_early"]++;
+        Notify(nm.empty() ? "Next visitor is on the way up." : nm + " is on the way up.");
+        audio.Play(AudioBank::Sfx::Ring, 0.45f);
+        return nm.empty() ? "Sending them up now." : "Sending " + nm + " up now.";
+    };
+    // paperwork: tonight's forms (LLM-generated or stock), filed one per
+    // submission - each completed form pauses instability for a stretch
+    os.getPaperwork = [this]() -> json {
+        if (!paperForms.is_array() || paperIdx >= (int)paperForms.size()) return json();
+        return paperForms[paperIdx];
+    };
+    // a checkbox can only be ticked if the deed behind it actually happened
+    os.canCertify = [this](const std::string& verify) -> std::string {
+        auto req = VERIFY_REQ.find(verify);
+        if (req == VERIFY_REQ.end()) return "";
+        auto it = deeds.find(verify);
+        return (it != deeds.end() && it->second > 0) ? "" : req->second;
+    };
+    os.onPaperworkFiled = [this]() {
+        paperIdx++;
+        float s = JF(Cfg()["instability"], "paperwork_freeze_sec", 25.f);
+        ad.FreezeInstability(s);
+        Notify("Form filed. The room holds still for a while.");
+        os.SetStatus("FILED - instability held " + std::to_string((int)s) + "s");
+        audio.Play(AudioBank::Sfx::TypeTick, 0.5f);
+    };
+    // BUILDING app: remote toggles on the same circuits - saves the hike
+    // across the room, still counts as "using" them for form verification
+    os.getLightsOn = [this] { return !manualLightsOff; };
+    os.getBlindsOpen = [this] { return office.blindsOpen; };
+    os.onToggleLights = [this] {
+        manualLightsOff = !manualLightsOff;
+        deeds["lights_used"]++;
+        audio.Play(AudioBank::Sfx::Click, 0.5f);
+        os.SetStatus(ad.HasKind("lights_office")
+                     ? "circuit fault - the lights aren't listening"
+                     : (manualLightsOff ? "office lights OFF" : "office lights ON"));
+    };
+    os.onToggleBlinds = [this] {
+        office.blindsOpen = !office.blindsOpen;
+        deeds["blinds_used"]++;
+        audio.Play(AudioBank::Sfx::Click, 0.5f);
+        os.SetStatus(office.blindsOpen ? "blinds raised" : "blinds drawn");
+    };
+    dlg.onSay = [this](const std::string& t) { SayToVisitor(t); };
+    phoneDlg.onSay = [this](const std::string& t) { PhoneSay(t); };
+    phoneDlg.onEnd = [this] { HangUpPhone(); };
+    dlg.onEnd = [this] { vs.EndInterview(); dlg.Reset(); deeds["interview_done"]++; Notify("Interview ended."); };
+
+    saveExists = FileExists(JS(Cfg(), "save_file", "save.json").c_str());
+    if (const char* s = std::getenv("EI_SHOT")) shotAt = (float)std::atof(s);
+    if (const char* p = std::getenv("EI_PLAY")) {  // dev hook: skip title
+        NewShift(false);
+        if (std::strcmp(p, "sit") == 0) SitDown(); // sit at the computer
+    }
+    if (std::getenv("EI_DEBUG")) debug = true;
+    if (const char* y = std::getenv("EI_YAW")) player.yaw = (float)std::atof(y);
+    if (const char* pt = std::getenv("EI_PITCH")) player.pitch = (float)std::atof(pt);
+    if (std::getenv("EI_HIDE")) {   // dev: spawn crouched under the desk
+        if (const Furni* desk = office.Find("desk"))
+            player.pos = {desk->pos.x, 0.f, desk->pos.z};
+        player.eyeH = 0.55f;
+    }
+    if (std::getenv("EI_DOOR")) doorOpen = true;   // dev: start with door swung open
+    if (const char* fa = std::getenv("EI_ANOM"))  // dev hook: force-spawn an office anomaly
+        ad.DebugForceOffice(fa, office);
+    if (const char* fk = std::getenv("EI_KIND"))  // dev hook: force-spawn any def by kind
+        ad.DebugForceKind(fk, office);
+    if (const char* ap = std::getenv("EI_APP")) {  // dev: pin a monitor app open
+        if (!std::strcmp(ap, "book"))      os.app = FakeOS::App::Appointments;
+        else if (!std::strcmp(ap, "phone"))    os.app = FakeOS::App::Phone;
+        else if (!std::strcmp(ap, "paper"))    os.app = FakeOS::App::Paperwork;
+        else if (!std::strcmp(ap, "building")) os.app = FakeOS::App::Building;
+    }
+    if (std::getenv("EI_CALL") && A.anomalies.contains("call_events"))  // dev hook: phone rings now
+        ad.DebugCallEvent(A.anomalies["call_events"][0]);
+    if (std::getenv("EI_WIN")) {   // dev: jump to the shift-end eval screen
+        NewShift(false);
+        gameHour = JF(Cfg()["game"], "shift_end_hour", 30.f) - 0.001f;
+        deeds["interview_done"] = 5; deeds["anomaly_resolved"] = 7; deeds["anomaly_seen"] = 9;
+        deeds["report_rejected"] = 2; deeds["call_answered"] = 3; deeds["call_ignored"] = 1;
+        deeds["intruder_survived"] = 1; deeds["breach_survived"] = 1; paperIdx = 4;
+    }
+    if (const char* lt = std::getenv("EI_LLMTEST")) {   // live LLM connectivity check, logs verdict
+        LLMClient::Request t;
+        int tid;
+        if (std::strcmp(lt, "dialog") == 0) {
+            // seat a real roster visitor and run the actual dialog path
+            vs.CurMut().person = vs.RosterFind("m_okafor");
+            if (!vs.CurMut().person && !vs.Roster().empty()) vs.CurMut().person = &vs.Roster()[0];
+            vs.CurMut().state = VState::Seated;
+            SayToVisitor("What brings you in tonight?");
+            tid = dlgReq;
+            TraceLog(LOG_WARNING, "[llmtest] sys=%.220s", BuildVisitorSystem().c_str());
+        } else if (std::strcmp(lt, "roster") == 0) {
+            RequestRoster();
+            tid = rosterReq;
+        } else if (std::strcmp(lt, "report") == 0) {
+            // submit but let PollLLM consume the verdict in the game loop -
+            // that's what drives crew dispatch + status updates
+            if (const char* rt = std::getenv("EI_REPORT")) SubmitReport(rt);
+            else SubmitReport("the office lights went out");
+            TraceLog(LOG_WARNING, "[llmtest] report submitted - watch [llm] verdict line");
+            tid = -1;
+        } else {
+            t.purpose = "frontdesk";
+            t.systemPrompt = JS(A.dialogs, "frontdesk_prompt");
+            t.user = "ping - reply with one short line";
+            tid = llm.Submit(t);
+        }
+        if (tid != -1) {
+            LLMClient::Result tr;
+            for (int i = 0; i < 480; i++) {   // ~12s worst case
+                if (llm.Poll(tid, tr)) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+            TraceLog(LOG_WARNING, "[llmtest] backend=%s http=%d ok=%d err=%s text=%.140s",
+                     tr.backend.c_str(), tr.httpStatus, (int)tr.ok,
+                     tr.errDetail.c_str(), tr.text.c_str());
+            if (std::strcmp(lt, "roster") == 0 && tr.ok) {
+                bool okv = vs.ApplyRosterJson(tr.text);
+                TraceLog(LOG_WARNING, "[llmtest] roster apply=%d names:", (int)okv);
+                for (auto& p : vs.Roster())
+                    TraceLog(LOG_WARNING, "  - %s | %s | %s", JS(p, "name").c_str(),
+                             JS(p, "role").c_str(), JS(p, "always_anomaly", "-").c_str());
+            }
+        }
+    }
+    return true;
+}
+
+// Build the light list from furniture + optional config "extra_lights".
+void Game::CollectLights() {
+    fx.lights.clear();
+    for (auto& f : office.items) {
+        if (f.type == "ceiling_light")
+            fx.lights.push_back({{f.pos.x, f.pos.y - 0.4f, f.pos.z},
+                                 {235, 228, 205, 255}, 9.5f, 1.6f, f.room, true});
+        else if (f.type == "desk")
+            // faint warm bounce trapped under the desktop - its downward-facing
+            // underside gets zero light from the ceiling fixtures, so it reads
+            // as invisible black while hiding under it
+            fx.lights.push_back({{f.pos.x, f.size.y - 0.2f, f.pos.z},
+                                 {130, 112, 90, 255}, 1.9f, 0.6f, "office", false});
+        else if (f.type == "desk_lamp") {
+            float c = std::cos(f.rotY * DEG2RAD), s = std::sin(f.rotY * DEG2RAD);
+            Vector3 off{0.1f * c + -0.06f * s, f.size.y - 0.06f, -0.1f * s + -0.06f * c};
+            // separate circuit: never flickers or dies - the desk stays readable
+            // even during a lights_office outage
+            fx.lights.push_back({{f.pos.x + off.x, f.pos.y + off.y, f.pos.z + off.z},
+                                 {255, 198, 130, 255}, 4.5f, 1.15f, "office", false});
+        }
+    }
+    Vector3 mc = office.MonitorScreenCenter();
+    fx.lights.push_back({{mc.x, mc.y + 0.05f, mc.z + 0.45f}, office.monitorGlow,
+                         3.2f, 0.8f, "office", false});
+    if (Cfg().contains("extra_lights"))
+        for (auto& e : Cfg()["extra_lights"])
+            fx.lights.push_back({JV3(e["pos"]), JC(e["color"], {200, 205, 190, 255}),
+                                 JF(e, "radius", 5.f), JF(e, "intensity", 0.8f),
+                                 JS(e, "room", "waiting"), JB(e, "flicker", false)});
+}
+
+void Game::ApplyProvider() {
+    auto& c = Cfg()["llm"];
+    LLMClient::Provider p = providerIdx == 0 ? LLMClient::Provider::Groq
+                          : providerIdx == 1 ? LLMClient::Provider::Local
+                                             : LLMClient::Provider::Stub;
+    json s = (p == LLMClient::Provider::Local) ? c["local"] : c["groq"];
+    std::string ep = !llmEndpoint.empty() ? llmEndpoint : JS(s, "endpoint");
+    std::string mdl = !llmModel.empty() ? llmModel : JS(s, "model");
+    std::string key = (p == LLMClient::Provider::Groq) ? apiKey : "";
+    llm.Configure(p, ep, key, mdl, JI(s, "max_tokens", 220), JF(s, "temperature", 0.7f),
+                  JI(s, "timeout_sec", 25), JI(c, "rate_limit_pause_sec", 65));
+    SaveSettings();
+}
+
+void Game::ApplyAudio() {
+    SetMasterVolume(volMaster);
+    audio.sfxMul = volSfx;
+    audio.ambMul = volAmb;
+    audio.SetMenuMusicVol(volMusic);
+    audio.SetHumLevel(1.f);     // hum loops - re-apply with the new amb scale
+}
+
+void Game::LoadSettings() {
+    json j = LoadJsonFile("settings.json");
+    if (j.empty()) {
+        // fresh install: an exported profile dropped next to the exe is
+        // auto-imported so ZIP builds pick up an old build's data wholesale
+        json p = LoadJsonFile("ei_profile.json");
+        if (p.is_object() && p.contains("settings") && p["settings"].is_object()) {
+            SaveJsonFile("settings.json", p["settings"]);
+            j = p["settings"];
+            if (p.contains("save") && p["save"].is_object() && !p["save"].empty())
+                SaveJsonFile(JS(Cfg(), "save_file", "save.json"), p["save"]);
+            TraceLog(LOG_INFO, "[profile] auto-imported ei_profile.json");
+        }
+    }
+    if (j.empty()) return;
+    providerIdx = std::clamp(j.value("provider", 0), 0, 2);
+    if (apiKey.empty()) apiKey = j.value("api_key", std::string());
+    llmEndpoint = j.value("llm_endpoint", std::string());
+    llmModel = j.value("llm_model", std::string());
+    sens = j.value("sensitivity", sens);
+    volMaster = std::clamp(j.value("vol_master", 1.f), 0.f, 1.f);
+    volSfx = std::clamp(j.value("vol_sfx", 1.f), 0.f, 1.f);
+    volAmb = std::clamp(j.value("vol_ambience", 1.f), 0.f, 1.f);
+    volMusic = std::clamp(j.value("vol_music", 1.f), 0.f, 1.f);
+    hardcodedOnly = j.value("hardcoded_anomalies", true);   // LLM anomalies opt-IN, not default
+    seenNames = j.value("seen_names", std::vector<std::string>{});
+    night = std::max(1, j.value("night", 1));
+    lastEval = j.value("last_eval", std::string());
+    if (j.contains("keys")) {
+        auto& k = j["keys"];
+        keys.fwd = k.value("fwd", KEY_W);
+        keys.back = k.value("back", KEY_S);
+        keys.left = k.value("left", KEY_A);
+        keys.right = k.value("right", KEY_D);
+        keys.sprint = k.value("sprint", KEY_LEFT_SHIFT);
+        keys.crouch = k.value("crouch", KEY_Q);
+        keys.interact = k.value("interact", KEY_E);
+        keys.swap = k.value("swap", KEY_TAB);
+    }
+    if (const char* e = std::getenv("EI_NIGHT")) night = std::max(1, atoi(e));   // dev: force night
+    ApplyAudio();
+}
+
+void Game::SaveSettings() {
+    json j{{"provider", providerIdx}, {"api_key", apiKey}, {"sensitivity", sens},
+           {"hardcoded_anomalies", hardcodedOnly}, {"seen_names", seenNames},
+           {"night", night}, {"last_eval", lastEval},
+           {"vol_master", volMaster}, {"vol_sfx", volSfx}, {"vol_ambience", volAmb},
+           {"vol_music", volMusic},
+           {"llm_endpoint", llmEndpoint}, {"llm_model", llmModel},
+           {"keys", {{"fwd", keys.fwd}, {"back", keys.back}, {"left", keys.left},
+                     {"right", keys.right}, {"sprint", keys.sprint}, {"crouch", keys.crouch},
+                     {"interact", keys.interact}, {"swap", keys.swap}}}};
+    SaveJsonFile("settings.json", j);
+}
+
+// ZIP-build migration: pack settings.json (provider, api key, endpoint,
+// model, keybinds, volumes, night progress, seen names) AND save.json into
+// one ei_profile.json. Drop that single file next to a new build's exe and
+// it auto-imports on boot - or use IMPORT PROFILE below for same-folder.
+void Game::ExportProfile() {
+    SaveSettings();   // make sure the file on disk reflects current values
+    json p;
+    p["format"] = "exit_interview_profile";
+    p["version"] = 1;
+    p["settings"] = LoadJsonFile("settings.json");
+    p["save"] = LoadJsonFile(JS(Cfg(), "save_file", "save.json"));
+    SaveJsonFile("ei_profile.json", p);
+    Notify("Profile exported to ei_profile.json - copy it into the new build folder.");
+}
+
+bool Game::ImportProfile() {
+    json p = LoadJsonFile("ei_profile.json");
+    if (!p.is_object() || !p.contains("settings") || !p["settings"].is_object())
+        return false;
+    SaveJsonFile("settings.json", p["settings"]);
+    LoadSettings();
+    ApplyProvider();
+    if (p.contains("save") && p["save"].is_object() && !p["save"].empty()) {
+        SaveJsonFile(JS(Cfg(), "save_file", "save.json"), p["save"]);
+        saveExists = true;
+    }
+    return true;
+}
+
+void Game::Notify(const std::string& s) { notes.push_back({s, 7.f}); }
+
+// fire-once tutorial toast - night 1 walks the new clerk through the job
+void Game::Tut(const char* key, const std::string& msg) {
+    if (night != 1 || !tutSeen.insert(key).second) return;
+    notes.push_back({msg, 10.f});
+}
+
+// LLM generates tonight's cast in the background while the title idles; the
+// roster is validated + applied at NewShift. Seen names carry across runs so
+// the same faces don't come back shift after shift.
+void Game::RequestRoster() {
+    if (rosterReq != -1) return;
+    LLMClient::Request r;
+    r.purpose = "roster";
+    r.maxTokens = 3200;   // 9 personas + personas strings; gpt-oss also spends reasoning tokens
+    r.temperature = 0.95f;
+    r.systemPrompt = "You write the cast of a horror game about a night-shift HR exit-interview clerk. "
+        "Reply with ONLY a JSON array - no prose, no markdown fences.";
+    std::string avoid;
+    for (auto& n : seenNames) avoid += "\"" + n + "\", ";
+    r.user =
+        "Generate 8 employee personas for exit interviews at a slightly wrong office building. "
+        "Each element: {\"name\":\"First Last\",\"dept\":\"<department>\",\"role\":\"<job title>\","
+        "\"employed\":\"<startyear>-2026\",\"reason\":\"<why leaving>\",\"persona\":\"<1 sentence: voice, mannerism, quirk>\","
+        "\"appearance\":{\"height\":<0.92-1.14>,\"gender\":\"male|female\",\"skin\":[r,g,b],\"shirt\":[r,g,b],"
+        "\"pants\":[r,g,b],\"hair\":[r,g,b],\"hair_style\":\"cap|buzz|long|ponytail|bun|balding|bald\","
+        "\"eye_color\":[r,g,b],\"eyes\":\"normal\"}}.\n"
+        "Rules: every run must feel like a different building's staff - pull names from varied cultures "
+        "and generations, never reuse surnames, invent different departments each time (Archival, Drainage, "
+        "Compliance, Night Records - not just HR/IT), and vary reasons from mundane to quietly wrong "
+        "(\"retiring\", \"the floor moved\", \"was never hired\"). Personas feel like real tired employees "
+        "with small strange edges. "
+        "appearance must visibly match who they are - these fields drive the 3D model the player interviews: "
+        "grey or white hair on older staff, pale washed-out skin on night-shift regulars, muted worn shirt colors "
+        "for long-employed ones, a rougher skin tone for field/manual workers, height near 1.0 average. "
+        "Mix genders, hair styles and iris colors across the cast - eight identical silhouettes reads as a bug. "
+        "ANOMALOUS personas get unsettling variants (black or wrong eyes, extreme height, drained skin/hair).\n"
+        "Element 7 must be a person who could not be here (deceased or long gone) - set \"always_anomaly\":\"impossible_visitor\", "
+        "reason like \"Deceased (2014, building fire)\", and persona starting with ANOMALOUS. "
+        "Element 8 must be the player's uncanny \"replacement\" - set \"always_anomaly\":\"hostile\", dept HR, role Replacement, "
+        "employed \"-\", reason \"-\", eyes \"black\", height ~1.12, persona starting with ANOMALOUS.\n"
+        "Do NOT reuse any of these already-seen names: " + (avoid.empty() ? "(none)" : avoid) +
+        "\nRespond with ONLY the JSON array.";
+    rosterReq = llm.Submit(r);
+}
+
+// overnight paperwork - generated per shift so there's desk work between
+// visitors. Verified items keep the player honest.
+void Game::RequestPaperwork() {
+    if (paperReq != -1) return;
+    LLMClient::Request r;
+    r.purpose = "paperwork";
+    r.maxTokens = 2600;
+    r.temperature = 0.8f;
+    std::string keys;
+    for (auto& [k, v] : VERIFY_REQ) keys += "\"" + k + "\"(" + v + "), ";
+    r.systemPrompt = "You write bureaucratic form content for a horror game about a night-shift HR clerk. "
+        "Reply with ONLY a JSON array - no prose, no markdown fences.";
+    r.user =
+        "Generate 6 in-universe overnight paperwork forms for an HR clerk's desk terminal. "
+        "Each element: {\"title\":\"FORM <code>: <NAME>\",\"items\":[...],\"sign\":\"<signature line label>\"}.\n"
+        "Each item is {\"t\":\"<checklist line>\",\"verify\":\"<key>\"}. "
+        "Most items are pure clerical work with \"verify\":\"none\" (dates, room numbers, staples, copies to Records). "
+        "1-2 items per form MUST reference real clerk actions using these verify keys ONLY: " + keys + "\n"
+        "Verify items must read like things the clerk genuinely did tonight (e.g. verify interview_done -> "
+        "\"Interview conducted and logged\"). Keep item text under 8 words. "
+        "Form names should be mundane with slightly wrong edges. Respond with ONLY the JSON array.";
+    paperReq = llm.Submit(r);
+}
+
+// parse/validate the generated forms - any malformed element is dropped,
+// unknown verify keys degrade to "none" rather than blocking the form
+bool Game::ApplyPaperworkJson(const std::string& text) {
+    auto a = text.find('['), b = text.rfind(']');
+    if (a == std::string::npos || b <= a) return false;
+    json arr;
+    try { arr = json::parse(text.substr(a, b - a + 1)); }
+    catch (...) { return false; }
+    if (!arr.is_array() || arr.size() < 3) return false;
+    json forms = json::array();
+    for (auto& f : arr) {
+        if (!f.is_object() || !f.contains("items") || !f["items"].is_array()) continue;
+        json q;
+        q["title"] = SanitizeText(JS(f, "title")).substr(0, 48);
+        q["sign"] = SanitizeText(JS(f, "sign", "SIGNATURE")).substr(0, 40);
+        json items = json::array();
+        for (auto& it : f["items"]) {
+            std::string t = it.is_string() ? it.get<std::string>() : JS(it, "t");
+            t = SanitizeText(t);
+            if (t.empty()) continue;
+            std::string v = it.is_string() ? "none" : JS(it, "verify", "none");
+            if (!VERIFY_REQ.count(v)) v = "none";
+            items.push_back({{"t", t.substr(0, 60)}, {"verify", v}});
+        }
+        if (items.size() < 2) continue;
+        q["items"] = items;
+        forms.push_back(q);
+    }
+    if (forms.size() < 3) return false;
+    paperForms = forms;
+    return true;
+}
+
+void Game::NewShift(bool fromSave) {
+    if (!fromSave) {
+        gameHour = JF(Cfg()["game"], "shift_start_hour", 18.f);
+        if (const char* h = std::getenv("EI_HOUR"))   // dev: jump the shift clock
+            gameHour = std::clamp((float)std::atof(h), 18.f, 30.f);
+        vs.night = night;   // before ApplyRosterJson - slot casting gates on it
+        office.Load(A.office, Cfg());
+        office.blindsOpen = std::getenv("EI_BLINDS") != nullptr;   // dev: breach testing
+        // an LLM roster waits between shifts - swap it in before Reset so
+        // tonight's visitors, ambient NPCs and the book all use fresh faces
+        if (!rosterRaw.empty()) {
+            if (vs.ApplyRosterJson(rosterRaw)) {
+                TraceLog(LOG_INFO, "[roster] LLM cast applied (%s)", llm.ProviderName().c_str());
+                for (auto& p : vs.Roster()) {
+                    seenNames.push_back(JS(p, "name"));
+                    if (seenNames.size() > 80) seenNames.erase(seenNames.begin());
+                }
+                SaveSettings();
+            } else {
+                // keep a tail sample so the rejection is diagnosable (truncated
+                // JSON, prose wrapper, empty content...)
+                std::string tail = rosterRaw.size() > 120
+                    ? rosterRaw.substr(rosterRaw.size() - 120) : rosterRaw;
+                TraceLog(LOG_WARNING, "[roster] generation unusable - stock cast tonight (%u bytes, tail: %s)",
+                         (unsigned)rosterRaw.size(), tail.c_str());
+            }
+            rosterRaw.clear();
+        }
+        // same deal for tonight's paperwork: LLM forms if the generation
+        // landed, the stock set from dialogs.json otherwise
+        paperForms = json::array();
+        if (!paperRaw.empty()) {
+            if (ApplyPaperworkJson(paperRaw))
+                TraceLog(LOG_INFO, "[paperwork] LLM forms applied (%s)", llm.ProviderName().c_str());
+            else TraceLog(LOG_WARNING, "[paperwork] generation unusable - stock forms tonight");
+            paperRaw.clear();
+        }
+        if (paperForms.empty() && A.dialogs.contains("paperwork")) paperForms = A.dialogs["paperwork"];
+        // difficulty sizes tonight's workload: early shifts get a short
+        // visitor book and a thin forms stack, deep nights run everything
+        {
+            int slotCap = 999, formCap = 999;
+            auto arrV = Cfg()["game"].value("visitor_slots_by_night", json::array());
+            if (night - 1 < (int)arrV.size() && arrV[night - 1].is_number())
+                slotCap = arrV[night - 1].get<int>();
+            auto arrF = Cfg()["game"].value("paper_forms_by_night", json::array());
+            if (night - 1 < (int)arrF.size() && arrF[night - 1].is_number())
+                formCap = arrF[night - 1].get<int>();
+            vs.SetSlotCap(slotCap);
+            if (paperForms.is_array() && (int)paperForms.size() > formCap)
+                paperForms.erase(paperForms.begin() + formCap, paperForms.end());
+        }
+        deeds.clear();
+        vs.night = night;   // Reset()->InjectLore() gates on tonight's number
+        vs.Reset();
+        ad.Reset();
+        Vector3 sp = JV3(A.office["player_spawn"]["pos"]);
+        player.pos = sp;
+        player.yaw = JF(A.office["player_spawn"], "yaw", 180);
+    }
+    os.Reset(); dlg.Reset(); phoneDlg.Reset();
+    phone = PhoneEvt{};
+    notes.clear(); ending.clear(); deathTitle.clear();
+    scareT = 0; sitT = 0; lean = unseatT = 0;
+    shake = 0; blackoutT = 0; doorOpen = false; doorAnim = 0; intruderSeen = false; manualLightsOff = false;
+    camRoll = 0; settleDip = 0; lastBobSin = 0; wasMoving = false; cam.up = {0.f, 1.f, 0.f};
+    breachT = 0; breachWarned = false; breachRush = -1; breachSearchT = 0; breachCooldown = 0;
+    breachDoor = false;
+    heartT = 0; evalScore = -1;
+    lastVState = VState::None; askedCur = false;
+    office.moveGlides.clear();
+    noteSfx = false; hallWhisperT = 0;
+    workCallsUsed.clear();
+    allDutiesToasted = false; visitorClosedDoor = false;
+    autoEndT = -1.f; earlyEndT = -1.f; doorRattle = 0.f;
+    loreText.clear(); loreCardT = 0;
+    workCallT = JF(Cfg()["instability"], "work_call_first_sec", 45.f);
+    paperIdx = 0;
+    player.crouching = player.forcedCrouch = player.hiding = false;
+    player.pitch = 0;
+    cam.fovy = fovBase;
+    dlgReq = repReq = facReq = deskReq = remixReq = phoneReq = phoneEvalReq = rosterReq = paperReq = -1;
+    ad.freeform = !hardcodedOnly;
+    ad.night = night;
+    vs.night = night;
+    tutSeen.clear();
+    mode = Mode::Roam;
+    DisableCursor();
+    Notify("Shift started. Survive until " + FmtClock(JF(Cfg()["game"], "shift_end_hour", 30)) + ".");
+    if (night == 1)
+        Notify("Orientation: someone will knock. Let them in, sit at your desk, run the interview, then dismiss them.");
+}
+
+std::string Game::BuildVisitorSystem() const {
+    const Visitor& v = vs.Cur();
+    if (!v.person) return JS(A.dialogs, "visitor_system_prompt");
+    std::string sys = JS(A.dialogs, "visitor_system_prompt");
+    auto rep = [&](const char* k, const std::string& val) { sys = ReplaceAll(sys, "{" + std::string(k) + "}", val); };
+    rep("name", JS(*v.person, "name"));
+    rep("role", JS(*v.person, "role"));
+    rep("dept", JS(*v.person, "dept"));
+    rep("employed", JS(*v.person, "employed"));
+    rep("reason", JS(*v.person, "reason"));
+    rep("persona", JS(*v.person, "persona"));
+    if (!v.anomaly.empty())
+        sys += JS(A.dialogs["visitor_anomaly_addendum"], v.anomaly.c_str());
+    else {
+        // normal visitors get an anti-weirdness addendum - without it the model
+        // sometimes drifts creepy/contradictory and reads as a false anomaly
+        std::string add = JS(A.dialogs, "visitor_normal_addendum");
+        for (const char* k : {"role", "dept", "employed", "reason"})
+            add = ReplaceAll(add, "{" + std::string(k) + "}", JS(*v.person, k));
+        sys += add;
+    }
+    return sys;
+}
+
+void Game::SayToVisitor(const std::string& text) {
+    if (vs.VisitorSeated()) askedCur = true;   // a real question was put to them
+    if (!vs.VisitorSeated()) { Notify("No one is sitting across from you."); return; }
+    vs.transcript.push_back({"You", text});
+    LLMClient::Request r;
+    r.purpose = "dialog";
+    r.systemPrompt = BuildVisitorSystem();
+    std::string ctx;
+    int n = (int)vs.transcript.size();
+    for (int i = std::max(0, n - 7); i < n; i++) {
+        // label player lines as the interviewer - "You" makes the model think
+        // those are its own turns and it answers like an assistant
+        const std::string& spk = vs.transcript[i].first;
+        ctx += (spk == "You" ? "Interviewer" : spk) + ": " + vs.transcript[i].second + "\n";
+    }
+    r.user = "CONVERSATION SO FAR:\n" + ctx + "\nReply in character as " + vs.Cur().Name() +
+             ", the visitor being interviewed. Speak only " + vs.Cur().Name() + "'s next line.";
+    dlg.pendingReply = true;
+    dlgReq = llm.Submit(r);
+
+    // dismissals end the interview without the END button: "that's all",
+    // "you can go", "we're done here" - the things an interviewer actually
+    // says to wrap up. The reply lands first, then they take the hint.
+    static const std::vector<std::string> kEndPhrases = {
+        "that's all", "that is all", "that'll be all", "that will be all",
+        "nothing further", "you can go", "you may go", "you may leave",
+        "you are free to go", "free to go", "you're free to go", "can leave now",
+        "interview is over", "interview's over", "end the interview",
+        "end this interview", "conclude the interview", "we're done here",
+        "we are done", "that concludes", "wrap it up", "wrap this up",
+        "dismissed", "you're dismissed", "you are dismissed",
+        "thank you for your time", "thanks for your time", "that'll do",
+        "see yourself out", "show yourself out", "goodbye", "good bye",
+        "take care", "no more questions", "nothing else to discuss",
+        "we can end here", "let's end here", "done talking"};
+    if (TextHasAny(text, kEndPhrases) && autoEndT < 0.f)
+        autoEndT = 2.6f;   // let them answer, then they rise and go
+
+    // hostility trigger: enough engagement makes it start slipping
+    if (vs.Cur().anomaly == "hostile") {
+        int youCount = 0;
+        for (auto& t : vs.transcript) if (t.first == "You") youCount++;
+        if (youCount >= 3) vs.MarkHostileRevealed();
+    }
+}
+
+void Game::SubmitReport(const std::string& text) {
+    if (repReq != -1) { os.SetStatus("Terminal is processing..."); return; }
+    LLMClient::Request r;
+    r.purpose = "report";
+    std::string active = ad.ActiveDescriptions("office");
+    if (ad.IntruderActive()) active += "- [intruder] " + JS(A.anomalies["intruder"], "desc") + "\n";
+    r.systemPrompt = ReplaceAll(
+        ReplaceAll(JS(A.dialogs, "validator_prompt"), "{active}", active),
+        "{report}", text);
+    r.user = "REPORT: " + text;
+    r.candidates = ad.Candidates("office");
+    if (ad.IntruderActive()) {
+        std::vector<std::string> kw;
+        for (auto& k : A.anomalies["intruder"]["keywords"]) kw.push_back(k.get<std::string>());
+        r.candidates.push_back({"intruder", kw});
+    }
+    r.acceptLine = JS(A.dialogs["stub"], "report_accept");
+    r.failLine = JS(A.dialogs["stub"], "report_fail");
+    repText = text;
+    repReq = llm.Submit(r);
+    os.SetStatus("Submitting...");
+}
+
+// when a report/call misses, see if the text matches a live anomaly on a
+// different channel and tell the player where to send it instead
+std::string Game::OtherChannelHint(const std::string& text, const std::string& tried) {
+    auto figKws = ad.ActiveKeywords("figure");
+    auto bangKws = ad.ActiveKeywords("banging");
+    if (tried != "security" && !figKws.empty() && TextHasAny(text, figKws))
+        return "Someone out there is a person problem - PHONE > Security.";
+    if (tried != "security" && !bangKws.empty() && TextHasAny(text, bangKws))
+        return "That's a PERSON hammering on the building - PHONE > Security > INTRUDER.";
+    if (tried != "exterior")
+        for (auto& c : ad.Candidates("exterior"))
+            if (ad.KindOf(c.first).rfind("figure", 0) != 0 &&
+                ad.KindOf(c.first).rfind("banging", 0) != 0 && TextHasAny(text, c.second))
+                return "That's outside the office - PHONE > Facilities.";
+    if (tried != "office")
+        for (auto& c : ad.Candidates("office"))
+            if (TextHasAny(text, c.second))
+                return "That's an in-office detail - file it via REPORT.";
+    if (tried != "security")
+        for (auto& c : ad.Candidates("visitor"))
+            if (TextHasAny(text, c.second))
+                return "That's about your visitor - PHONE > Security.";
+    return "";
+}
+
+// ---------- crew dispatch ----------
+// A resolved anomaly gets a physical response: workers/guards walk the hall
+// path into the room, go to the actual anomaly spot, and act on it - ladder
+// work on ceiling lights, replacement parts for missing items, toolkits for
+// moved/changed furniture, movers hauling out spawned objects, guards
+// sweeping figures/escorting visitors. World effect reverts when they finish.
+
+static void DrawLadder(Vector3 base, float yawDeg, float tiltDeg) {
+    rlPushMatrix();
+    rlTranslatef(base.x, base.y, base.z);
+    rlRotatef(yawDeg, 0, 1, 0);
+    rlRotatef(tiltDeg, 1, 0, 0);
+    Color al{170, 176, 186, 255}, dk{118, 124, 134, 255};
+    DrawCubeV({-0.21f, 0.95f, 0}, {0.05f, 1.9f, 0.055f}, al);
+    DrawCubeV({ 0.21f, 0.95f, 0}, {0.05f, 1.9f, 0.055f}, al);
+    for (int i = 0; i < 5; i++)
+        DrawCubeV({0, 0.28f + i * 0.32f, 0}, {0.44f, 0.05f, 0.045f}, dk);
+    rlPopMatrix();
+}
+
+// shared walkability test: inside a room, not in the dividing wall (except the
+// door gap), and not inside floor furniture. Used by stand-spot pick + A*.
+bool Game::PointBlocked(float x, float z, float mgn) {
+    // room membership - the z=-5 side is NOT inset; the wall band check below
+    // handles it so the door gap stays walkable
+    bool inOffice = x > office.bounds.mn.x + mgn && x < office.bounds.mx.x - mgn &&
+                    z > office.doorZ - 0.05f && z < office.bounds.mx.z - mgn;
+    bool inWait = x > office.waitingBounds.mn.x + mgn && x < office.waitingBounds.mx.x - mgn &&
+                  z > office.waitingBounds.mn.z + mgn && z < office.doorZ + 0.05f;
+    if (!inOffice && !inWait) return true;
+    // office/waiting dividing wall at doorZ - only the door opening is passable
+    if (std::fabs(z - office.doorZ) < 0.16f + mgn * 0.5f &&
+        (x < office.doorX.x + mgn || x > office.doorX.y - mgn)) return true;
+    for (auto& f : office.items) {
+        if (f.hidden || f.pos.y > 0.6f || f.type == "door") continue;
+        float c = std::cos(f.rotY * DEG2RAD), s = std::sin(f.rotY * DEG2RAD);
+        float hx = (std::fabs(f.size.x * c) + std::fabs(f.size.z * s)) / 2 + mgn;
+        float hz = (std::fabs(f.size.x * s) + std::fabs(f.size.z * c)) / 2 + mgn;
+        if (hx * hz < 0.03f) continue;   // thin wall decor doesn't block feet
+        if (x > f.pos.x - hx && x < f.pos.x + hx && z > f.pos.z - hz && z < f.pos.z + hz) return true;
+    }
+    return false;
+}
+
+// A* over a coarse grid spanning both rooms, then line-of-sight smoothing.
+std::vector<Vector2> Game::NavPath(Vector2 from, Vector2 to) {
+    const float cell = 0.3f;
+    const float x0 = office.waitingBounds.mn.x, z0 = office.waitingBounds.mn.z;
+    const int W = (int)((office.bounds.mx.x - x0) / cell);
+    const int H = (int)((office.bounds.mx.z - z0) / cell);
+    auto at = [&](int x, int z) { return Vector2{x0 + (x + 0.5f) * cell, z0 + (z + 0.5f) * cell}; };
+    auto cellOf = [&](Vector2 p) {
+        int x = std::clamp((int)((p.x - x0) / cell), 0, W - 1);
+        int z = std::clamp((int)((p.y - z0) / cell), 0, H - 1);
+        return std::pair<int, int>{x, z};
+    };
+    std::vector<char> blk((size_t)W * H, 0);
+    for (int z = 0; z < H; z++) for (int x = 0; x < W; x++) {
+        Vector2 p = at(x, z);
+        blk[(size_t)z * W + x] = PointBlocked(p.x, p.y, 0.36f) ? 1 : 0;
+    }
+    auto freeNear = [&](int& cx, int& cz) {
+        if (!blk[(size_t)cz * W + cx]) return;
+        for (int r = 1; r < 10; r++)
+            for (int dz = -r; dz <= r; dz++) for (int dx = -r; dx <= r; dx++) {
+                if (std::max(std::abs(dx), std::abs(dz)) != r) continue;
+                int nx = cx + dx, nz = cz + dz;
+                if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+                if (!blk[(size_t)nz * W + nx]) { cx = nx; cz = nz; return; }
+            }
+    };
+    auto [sx, sz] = cellOf(from); auto [tx, tz] = cellOf(to);
+    freeNear(sx, sz); freeNear(tx, tz);
+
+    // A* - 8 directions, no diagonal corner cutting
+    const int N = W * H;
+    std::vector<float> g(N, 1e9f);
+    std::vector<int> prev(N, -1);
+    auto h = [&](int x, int z) { return std::hypotf((float)(x - tx), (float)(z - tz)); };
+    std::vector<std::pair<float, int>> open;
+    open.push_back({h(sx, sz), sz * W + sx});
+    g[sz * W + sx] = 0;
+    static const int D[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+    int found = -1;
+    while (!open.empty()) {
+        int bi = 0;
+        for (int i = 1; i < (int)open.size(); i++) if (open[i].first < open[bi].first) bi = i;
+        int cur = open[bi].second; open[bi] = open.back(); open.pop_back();
+        if (cur == tz * W + tx) { found = cur; break; }
+        int cx = cur % W, cz = cur / W;
+        for (auto& d : D) {
+            int nx = cx + d[0], nz = cz + d[1];
+            if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
+            if (blk[(size_t)nz * W + nx]) continue;
+            if (d[0] && d[1] && (blk[(size_t)cz * W + nx] || blk[(size_t)nz * W + cx])) continue;
+            float ng = g[cur] + (d[0] && d[1] ? 1.414f : 1.f);
+            int ni = nz * W + nx;
+            if (ng < g[ni]) { g[ni] = ng; prev[ni] = cur; open.push_back({ng + h(nx, nz), ni}); }
+        }
+    }
+    if (found < 0) return {to};
+
+    std::vector<Vector2> path;
+    for (int n = found; n != -1; n = prev[n]) path.push_back(at(n % W, n / W));
+    std::reverse(path.begin(), path.end());
+    if (path.size() > 1) { path.front() = from; path.back() = to; }
+
+    // greedy line-of-sight smoothing
+    auto clear = [&](Vector2 a, Vector2 b) {
+        float dx = b.x - a.x, dz = b.y - a.y;
+        int n = (int)(std::sqrt(dx * dx + dz * dz) / 0.12f) + 1;
+        for (int i = 1; i < n; i++) {
+            float t = (float)i / n;
+            if (PointBlocked(a.x + dx * t, a.y + dz * t, 0.34f)) return false;
+        }
+        return true;
+    };
+    std::vector<Vector2> sm;
+    sm.push_back(path[0]);
+    int i = 0;
+    while (i < (int)path.size() - 1) {
+        int j = (int)path.size() - 1;
+        while (j > i + 1 && !clear(path[i], path[j])) j--;
+        sm.push_back(path[j]);
+        i = j;
+    }
+    return sm;
+}
+
+// find a free spot on the floor near the anomaly - never inside furniture,
+// and never on the wrong side of the doorZ dividing wall (a spot behind the
+// wall looks close but leaves the crew working through a solid barrier)
+Vector2 Game::PickStandSpot(Vector3 wp, float prefA) {
+    bool officeSide = wp.z > office.doorZ;
+    auto ring = [&](bool sameRoom, Vector2& hit) {
+        for (float r = 0.8f; r <= 3.0f; r += 0.45f)
+            for (int i = 0; i < 12; i++) {
+                float a = prefA + (i == 0 ? 0.f : ((i + 1) / 2) * (i % 2 ? 1.f : -1.f) * 0.52f);
+                float x = wp.x + std::sin(a) * r, z = wp.z + std::cos(a) * r;
+                if (sameRoom && (z > office.doorZ) != officeSide) continue;
+                if (!PointBlocked(x, z, 0.34f)) { hit = {x, z}; return true; }
+            }
+        return false;
+    };
+    Vector2 hit{wp.x, wp.z};
+    ring(true, hit) || ring(false, hit);
+    return hit;
+}
+
+void Game::DispatchCrew(std::vector<ResolveOutcome> outs, int men, bool guards, bool escortVisitor) {
+    outs.erase(std::remove_if(outs.begin(), outs.end(), [](const ResolveOutcome& o) { return !o.ok; }), outs.end());
+    if (outs.empty()) return;
+    for (auto& c : crew) if (c.outcomes[0].id == outs[0].id) return;   // already en route
+    if (crew.size() >= 2) {
+        // room is full - resolve instantly rather than leaving the anomaly
+        // stuck in pending (which would hold its world effect on forever)
+        for (auto& o : outs) ad.ApplyResolveFx(o, office);
+        return;
+    }
+
+    CrewEvt e;
+    e.outcomes = outs;
+    e.workPos = outs[0].workPos;
+    e.escortVisitor = escortVisitor;
+    for (auto& o : outs) if (!o.spawnedId.empty()) e.carryId = o.spawnedId;
+
+    // pick the right tool for the job
+    const ResolveOutcome& lead = outs[0];
+    if (escortVisitor || lead.kind.rfind("figure", 0) == 0 || lead.channel == "intruder") {
+        e.prop = PROP_NONE; e.workLen = escortVisitor ? 1.6f : 2.2f;
+    } else if (lead.kind == "lights_office" || lead.kind == "lights_out") {
+        e.prop = PROP_LADDER; e.workLen = 4.2f;
+        // pick the fixture with the clearest floor access - a light hanging
+        // over the desk has no room for a ladder under it
+        const char* room = (lead.channel == "exterior") ? "waiting" : "office";
+        float best = 1e9f; Vector2 bestS{0, 0}; Vector3 bestL = e.workPos;
+        for (auto& f : office.items) {
+            if (f.room != room || f.type != "ceiling_light") continue;
+            Vector2 s = PickStandSpot(f.pos, std::atan2(0.f - f.pos.x, -4.4f - f.pos.z));
+            float dx = s.x - f.pos.x, dz = s.y - f.pos.z;
+            float score = dx * dx * 1.6f + dz * dz;          // favor staying on the light's axis
+            if (score < best) { best = score; bestS = s; bestL = f.pos; }
+        }
+        e.workPos = bestL;
+        e.ladderPos = {bestS.x, 0, bestS.y};
+    } else if (!e.carryId.empty()) {
+        e.workLen = 2.2f;                                   // movers haul it out
+    } else if (lead.hadTarget) {
+        Furni* f = office.Find(lead.targetId);
+        if (f && f->hidden) {                             // vanished item -> bring a replacement box
+            e.prop = PROP_BOX; e.workLen = 2.6f;
+            e.boxPos = {e.workPos.x, lead.snapshot.pos.y + lead.snapshot.size.y, e.workPos.z};
+        } else {                                          // moved/changed -> toolkit repair
+            e.prop = PROP_TOOLBOX; e.workLen = 3.4f;
+        }
+    } else { e.prop = PROP_TOOLBOX; e.workLen = 2.8f; }     // empty room: unjam the door
+
+    const Vector2 HALL{5.6f, -10.55f};                    // corridor door - crew's in/out
+    float prefA = std::atan2(0.f - e.workPos.x, -4.4f - e.workPos.z);   // approach from door side
+    for (int i = 0; i < men; i++) {
+        CrewMan m; m.guard = guards;
+        m.app.height = guards ? 1.06f : 1.0f;
+        m.app.shirt = guards ? Color{46, 54, 78, 255} : Color{215, 150, 50, 255};
+        m.app.hair  = guards ? Color{60, 60, 66, 255} : Color{50, 45, 38, 255};
+        m.app.skin = {200, 170, 145, 255};
+        m.pos = {8.9f, 0.f, -12.55f};                    // around the corridor corner, off camera
+        m.delay = i * 1.1f;                              // file in one at a time
+
+        Vector2 stand;
+        if (e.prop == PROP_LADDER)
+            stand = (i == 0) ? Vector2{e.ladderPos.x, e.ladderPos.z}
+                             : PickStandSpot(e.ladderPos, prefA + 2.4f);
+        else
+            stand = PickStandSpot(e.workPos, prefA + i * 1.1f);
+
+        // walk the corridor in THROUGH the hall door: corner -> doorway -> A*
+        m.pathIn = {{5.6f, -12.55f}, {5.6f, -11.4f}, HALL};
+        auto nav = NavPath(HALL, stand);
+        m.pathIn.insert(m.pathIn.end(), nav.begin(), nav.end());
+        m.pathOut = NavPath(stand, HALL);
+        // ...and back out through the hall door, vanishing around the corner
+        m.pathOut.push_back({5.6f, -11.4f});
+        m.pathOut.push_back({5.6f, -12.55f});
+        m.pathOut.push_back({8.9f, -12.55f});
+        e.men.push_back(m);
+    }
+    crew.push_back(e);
+    Notify(guards ? "Security detail en route."
+         : e.prop == PROP_LADDER ? "Maintenance is bringing a ladder."
+         : "Maintenance crew en route.");
+}
+
+void Game::UpdateCrew(float dt) {
+    if (crew.empty()) return;
+    // crew hold the office door open while passing through it
+    bool nearDoor = false;
+    for (auto& e : crew) for (auto& m : e.men)
+        if (std::fabs(m.pos.x) < 1.4f && std::fabs(m.pos.z + 5.75f) < 1.4f) nearDoor = true;
+    if (nearDoor && !doorOpen) { doorOpen = true; crewOpenedDoor = true; audio.Play(AudioBank::Sfx::Creak, 0.5f); }
+
+    auto walk = [](CrewMan& m, const std::vector<Vector2>& path, float dt, float sp) -> bool {
+        if (m.delay > 0.f) { m.delay -= dt; return false; }
+        if (m.wp >= (int)path.size()) return true;
+        Vector2 t = path[m.wp];
+        Vector2 d{t.x - m.pos.x, t.y - m.pos.z};
+        float dist = std::sqrt(d.x * d.x + d.y * d.y);
+        if (dist < 0.12f) { m.wp++; return m.wp >= (int)path.size(); }
+        m.pos.x += d.x / dist * sp * dt; m.pos.z += d.y / dist * sp * dt;
+        m.yaw = std::atan2(d.x, d.y) * RAD2DEG;
+        m.animT += dt * 6.f;
+        return false;
+    };
+
+    for (auto& e : crew) {
+        bool allDone = true;
+        int carrying = 0;
+        for (auto& m : e.men) if (m.carrying) carrying++;
+        for (auto& m : e.men) {
+            if (e.phase == 0 || e.phase == 2) {
+                // leaving: done workers walk a touch brisker; carriers slow under load
+                float sp = e.phase == 2 ? (m.carrying ? 1.5f : 2.05f) : 1.9f;
+                if (!walk(m, e.phase == 2 ? m.pathOut : m.pathIn, dt, sp)) allDone = false;
+            } else if (e.phase == 1) {
+                m.animT += dt * 6.f;   // busy hands - face the thing
+                Vector2 d{e.workPos.x - m.pos.x, e.workPos.z - m.pos.z};
+                if (d.x * d.x + d.y * d.y > 0.01f) m.yaw = std::atan2(d.x, d.y) * RAD2DEG;
+            }
+        }
+        // ladder work: lead climbs while a second man steadies the base
+        if (e.prop == PROP_LADDER && e.phase == 1 && !e.men.empty()) {
+            CrewMan& lead = e.men[0];
+            lead.lift = std::min(1.f, e.workT * 2.2f) * 1.45f;
+            lead.armRaise = std::min(1.f, std::max(0.f, e.workT - 0.5f) * 2.f) * 0.95f;
+            lead.pos.x = e.ladderPos.x; lead.pos.z = e.ladderPos.z;
+            Vector2 dl{e.workPos.x - lead.pos.x, e.workPos.z - lead.pos.z};
+            if (dl.x * dl.x + dl.y * dl.y > 0.01f) lead.yaw = std::atan2(dl.x, dl.y) * RAD2DEG;
+        }
+        // two movers lift the spawned furniture between them
+        if (e.phase == 2 && carrying > 0)
+            if (Furni* f = office.Find(e.carryId)) {
+                Vector3 mid{0, 0.42f, 0};
+                for (auto& m : e.men) if (m.carrying) { mid.x += m.pos.x / carrying; mid.z += m.pos.z / carrying; }
+                f->pos = mid;
+            }
+        if (e.phase == 0 && allDone) {
+            e.phase = 1; e.workT = 0; e.propOut = true;
+            audio.Play(AudioBank::Sfx::Thump, 0.3f);
+            if (e.outcomes[0].channel == "intruder") ad.ClearIntruder(office);
+            if (e.escortVisitor) vs.SecurityRemove();
+            // figures read as "already gone when they got there" - clear on
+            // arrival; mutants straighten up and act normal when challenged
+            for (auto& o : e.outcomes)
+                if (o.kind.rfind("figure", 0) == 0 || o.kind == "mutated_waiting")
+                    ad.ApplyResolveFx(o, office);
+        }
+        if (e.phase == 1) {
+            e.workT += dt;
+            if ((int)(e.workT * 2.5f) != (int)((e.workT - dt) * 2.5f))   // tool ticks
+                audio.Play(AudioBank::Sfx::TypeTick, 0.22f);
+            // physically shove moved/turned furniture back while they work -
+            // ApplyResolveFx still snaps the remainder when the job ends
+            float pk = std::min(1.f, e.workT / std::max(0.1f, e.workLen));
+            pk = pk * pk * (3.f - 2.f * pk);
+            bool shoved = false;
+            for (auto& o : e.outcomes) {
+                if (!o.hadTarget) continue;
+                Furni* f = office.Find(o.targetId);
+                if (!f || f->hidden) continue;          // vanished item: the box swap reads instead
+                float dx = f->pos.x - o.snapshot.pos.x, dy = f->pos.y - o.snapshot.pos.y,
+                      dz = f->pos.z - o.snapshot.pos.z, dr = f->rotY - o.snapshot.rotY;
+                f->pos = {o.snapshot.pos.x + dx * (1.f - pk),
+                          o.snapshot.pos.y + dy * (1.f - pk),
+                          o.snapshot.pos.z + dz * (1.f - pk)};
+                f->rotY = o.snapshot.rotY + dr * (1.f - pk);
+                f->size = {o.snapshot.size.x + (f->size.x - o.snapshot.size.x) * (1.f - pk),
+                           o.snapshot.size.y + (f->size.y - o.snapshot.size.y) * (1.f - pk),
+                           o.snapshot.size.z + (f->size.z - o.snapshot.size.z) * (1.f - pk)};
+                f->color.r = (unsigned char)(o.snapshot.color.r + (f->color.r - o.snapshot.color.r) * (1.f - pk));
+                f->color.g = (unsigned char)(o.snapshot.color.g + (f->color.g - o.snapshot.color.g) * (1.f - pk));
+                f->color.b = (unsigned char)(o.snapshot.color.b + (f->color.b - o.snapshot.color.b) * (1.f - pk));
+                if (dx * dx + dy * dy + dz * dz > 1e-5f || std::fabs(dr) > 0.4f) shoved = true;
+            }
+            if (shoved) {
+                // closest free worker plants both palms on it - reads as an
+                // actual shove, not furniture sliding on its own
+                CrewMan* shover = nullptr; float bd = 1e9f;
+                for (auto& m : e.men) {
+                    if (m.delay > 0.f) continue;
+                    float mx = m.pos.x - e.workPos.x, mz = m.pos.z - e.workPos.z;
+                    float dd = mx * mx + mz * mz;
+                    if (dd < bd) { bd = dd; shover = &m; }
+                }
+                if (shover) shover->armRaise = std::max(shover->armRaise, 0.55f);
+                if ((int)(e.workT * 1.2f) != (int)((e.workT - dt) * 1.2f))
+                    audio.Play(AudioBank::Sfx::Creak, 0.2f);   // furniture scrape
+            }
+            if (e.workT >= e.workLen) {
+                for (auto& o : e.outcomes) ad.ApplyResolveFx(o, office);
+                if (e.outcomes[0].kind == "lights_office" || e.outcomes[0].kind == "lights_out")
+                    blackoutT = std::max(blackoutT, 0.08f);   // lights surge back
+                if (e.outcomes[0].kind == "empty_room") vs.WakeWaitingRoom();
+                for (int i = 0; i < (int)e.men.size(); i++) {
+                    CrewMan& m = e.men[i];
+                    m.wp = 0; m.lift = 0; m.armRaise = 0;
+                    m.delay = i * 0.7f;                       // file out one by one
+                    m.carrying = !e.carryId.empty();
+                }
+                if (e.prop == PROP_BOX) e.prop = PROP_NONE;           // the replacement is placed
+                e.propOut = false;
+                e.phase = 2;
+                audio.Play(AudioBank::Sfx::Click, 0.55f);
+            }
+        }
+        if (e.phase == 2 && allDone) e.phase = 3;
+    }
+    std::erase_if(crew, [&](const CrewEvt& e) {
+        if (e.phase != 3) return false;
+        if (!e.carryId.empty()) office.RemoveSpawned(e.carryId);
+        return true;
+    });
+    if (crew.empty() && crewOpenedDoor) { doorOpen = false; crewOpenedDoor = false; }
+}
+
+void Game::DrawCrew() const {
+    for (auto& e : crew) {
+        // the lead man's prop - carried on the way in/out, planted while working
+        if (!e.men.empty() && e.prop != PROP_NONE) {
+            const CrewMan& lead = e.men[0];
+            float yr = lead.yaw * DEG2RAD;
+            Vector3 f{std::sin(yr), 0, std::cos(yr)}, r{std::cos(yr), 0, -std::sin(yr)};
+            if (e.prop == PROP_LADDER) {
+                if (e.propOut) {
+                    float la = std::atan2(e.workPos.x - e.ladderPos.x, e.workPos.z - e.ladderPos.z) * RAD2DEG;
+                    DrawLadder({e.ladderPos.x, 0, e.ladderPos.z}, la, 15.f);
+                } else
+                    DrawLadder({lead.pos.x + r.x * 0.34f, 0.45f, lead.pos.z + r.z * 0.34f}, lead.yaw, 66.f);
+            } else if (e.prop == PROP_BOX) {
+                if (e.propOut)
+                    DrawCubeV({e.boxPos.x, e.boxPos.y + 0.11f, e.boxPos.z}, {0.3f, 0.22f, 0.26f}, Color{150, 118, 72, 255});
+                else
+                    DrawCubeV({lead.pos.x + f.x * 0.3f, 1.04f, lead.pos.z + f.z * 0.3f}, {0.3f, 0.22f, 0.26f}, Color{150, 118, 72, 255});
+            } else if (e.prop == PROP_TOOLBOX) {
+                if (e.propOut)
+                    DrawCubeV({lead.pos.x + r.x * 0.4f, 0.11f, lead.pos.z + r.z * 0.4f}, {0.36f, 0.22f, 0.2f}, Color{160, 44, 40, 255});
+                else
+                    DrawCubeV({lead.pos.x + r.x * 0.33f, 0.58f, lead.pos.z + r.z * 0.33f}, {0.36f, 0.22f, 0.2f}, Color{160, 44, 40, 255});
+            }
+        }
+        for (auto& m : e.men) {
+            // walking gait while pathing, planted feet while working (armRaise
+            // suppresses the gait automatically anyway)
+            float wAmt = (e.phase == 1 || m.delay > 0.f) ? 0.f : 1.f;
+            DrawHumanoid({m.pos.x, m.pos.y + m.lift, m.pos.z}, m.yaw, m.app,
+                         false, m.animT, m.armRaise, 0.f, wAmt);
+        }
+    }
+}
+
+// security dispatch is explicit: INTRUDER = a person problem (real intruder or
+// an anomalous visitor to escort out), ANOMALY = something non-human outside
+// (shadow figures at the window/door). Picking wrong redirects, not punishes.
+void Game::CallSecurity(const std::string& kind) {
+    std::string reply;
+    bool visitorAnom = vs.HasActiveVisitor() && !vs.Cur().anomaly.empty() && vs.Cur().state != VState::Gone;
+    bool figures = ad.HasKind("figure_at_window") || ad.HasKind("figure_at_door");
+    bool banging = ad.HasKind("banging_door") || ad.HasKind("banging_window");
+    deeds["security_called"]++;   // a completed call counts for the forms either way
+
+    if (kind == "intruder") {
+        if (ad.IntruderActive()) {
+            auto o = ad.BeginResolve("intruder", "intruder", office, vs, true);
+            if (o.ok) { o.workPos = ad.IntruderPos(); DispatchCrew({o}, 2, true); deeds["anomaly_resolved"]++; }
+            reply = JS(A.dialogs["stub"], "security_arriving");
+            Notify("Security is moving on the intruder.");
+            audio.Play(AudioBank::Sfx::Thump, 0.6f);
+        } else if (visitorAnom) {
+            ad.TryResolve("visitor", "v_" + vs.Cur().anomaly, office, vs);
+            // guards physically come collect them - escort choreography
+            ResolveOutcome eo;
+            eo.ok = true; eo.id = "escort_" + vs.Cur().anomaly; eo.channel = "office";
+            eo.workPos = vs.Cur().pos;
+            DispatchCrew({eo}, 2, true, true);
+            deeds["anomaly_resolved"]++;
+            reply = JS(A.dialogs["stub"], "security_arriving");
+            Notify("Security is coming to collect them.");
+            audio.Play(AudioBank::Sfx::Thump, 0.6f);
+        } else if (banging) {
+            // somebody hammering the door/glass IS a person problem - guards
+            // go chase them off, or the knocking never stops
+            std::vector<ResolveOutcome> outs;
+            for (auto& a : ad.Active())
+                if (a.channel == "exterior" && a.kind.rfind("banging", 0) == 0)
+                    outs.push_back(ad.BeginResolve("exterior", a.id, office, vs, true));
+            if (outs.empty()) {
+                reply = "Team's already on it. Give it a minute.";
+            } else {
+                DispatchCrew(outs, 2, true);
+                deeds["anomaly_resolved"] += (int)outs.size();
+                reply = JS(A.dialogs["stub"], "security_arriving");
+                Notify("Security is moving on whoever is hammering the building.");
+            }
+            audio.Play(AudioBank::Sfx::Thump, 0.6f);
+        } else {
+            reply = "No hostile person on our cameras.";
+            if (figures) reply += " If you mean the shape outside, that's an ANOMALY dispatch.";
+            else if (ad.HasKind("broken_window")) reply += " Broken glass is a repair job - that's Facilities.";
+            else if (!ad.Candidates("exterior").empty()) reply += " If it's the building acting up, that's Facilities.";
+            else if (!ad.Candidates("office").empty()) reply += " If something's off in your office, file a REPORT.";
+            if (ad.ActiveCount() == 0) {
+                ad.AddInstability(JF(Cfg()["instability"], "wrong_security_call_penalty", 10));
+                Notify("Security found nothing. That was a mistake.");
+            } else Notify("Nothing for an intruder team to grab.");
+        }
+    } else {   // "anomaly" - sweep non-office threats: shadow figures outside,
+               // and waiting-room people who aren't people anymore
+        bool mutants = ad.HasKind("mutated_waiting");
+        if (figures || mutants || banging) {
+            std::vector<ResolveOutcome> outs;
+            for (auto& a : ad.Active())
+                if (a.channel == "exterior" &&
+                    (a.kind.rfind("figure", 0) == 0 || a.kind == "mutated_waiting" ||
+                     a.kind.rfind("banging", 0) == 0))
+                    outs.push_back(ad.BeginResolve("exterior", a.id, office, vs, true));
+            if (outs.empty()) {
+                reply = "They're already out there sweeping. Give it a minute.";
+            } else {
+                DispatchCrew(outs, 2, true);
+                deeds["anomaly_resolved"] += (int)outs.size();
+                reply = JS(A.dialogs["stub"], "security_arriving");
+                Notify(mutants ? "Security is clearing the waiting room."
+                               : "Security is sweeping the perimeter.");
+            }
+            audio.Play(AudioBank::Sfx::Thump, 0.6f);
+        } else {
+            reply = "Perimeter reads clear.";
+            if (ad.IntruderActive() || visitorAnom) reply += " If the problem is a PERSON in the building, dispatch INTRUDER.";
+            else if (ad.HasKind("broken_window")) reply += " That's property damage, not a threat - call Facilities for the window.";
+            else if (!ad.Candidates("exterior").empty()) reply += " If it's the building acting up, that's Facilities.";
+            else if (!ad.Candidates("office").empty()) reply += " If something's off in your office, file a REPORT.";
+            if (ad.ActiveCount() == 0) {
+                ad.AddInstability(JF(Cfg()["instability"], "wrong_security_call_penalty", 10));
+                Notify("Security found nothing. That was a mistake.");
+            } else Notify("No anomaly outside for security to sweep.");
+        }
+    }
+    os.SetCallReply(reply);
+}
+
+void Game::CallFacilities(const std::string& desc) {
+    if (facReq != -1) return;
+    facText = desc;
+    deeds["facilities_called"]++;   // the call itself happened - a form asking
+                                    // for a dispatch is satisfiable even when
+                                    // nothing turns out to be broken
+    // a person sighting is Security's job - redirect instead of failing
+    if (TextHasAny(desc, ad.ActiveKeywords("figure"))) {
+        os.SetCallReply(JS(A.dialogs["stub"], "facilities_redirect_security"));
+        return;
+    }
+    LLMClient::Request r;
+    r.purpose = "facilities";
+    r.systemPrompt = ReplaceAll(
+        ReplaceAll(JS(A.dialogs, "facilities_prompt"), "{active}", ad.ActiveDescriptions("exterior", "figure")),
+        "{report}", desc);
+    r.user = "CALLER SAYS: " + desc;
+    auto cands = ad.Candidates("exterior");
+    std::erase_if(cands, [&](auto& c) { return ad.KindOf(c.first).rfind("figure", 0) == 0; });
+    r.candidates = cands;
+    r.acceptLine = JS(A.dialogs["stub"], "facilities_accept");
+    r.failLine = JS(A.dialogs["stub"], "facilities_fail");
+    facReq = llm.Submit(r);
+}
+
+void Game::CallFrontDesk(const std::string& msg) {
+    if (deskReq != -1) return;
+    deeds["frontdesk_called"]++;
+    LLMClient::Request r;
+    r.purpose = "frontdesk";
+    r.systemPrompt = ReplaceAll(JS(A.dialogs, "frontdesk_prompt"), "{report}", msg);
+    r.user = msg;
+    deskReq = llm.Submit(r);
+}
+
+// ---------- desk phone: anomaly calls with LLM personas ----------
+
+// the intruder timer ran out - hidden under the desk it sweeps past you
+void Game::OnIntruderStrike() {
+    if (player.hiding) {
+        ad.ClearIntruder(office);
+        deeds["intruder_survived"]++;
+        Notify("It searched the room and found nothing. Stay low a moment longer.");
+        audio.Play(AudioBank::Sfx::Heart, 0.7f);
+        return;
+    }
+    Jumpscare("intruder");
+}
+
+void Game::UpdatePhone(float dt) {
+    if (phone.ringing) {
+        phone.ringT += dt;
+        phone.ignoreT += dt;
+        if (phone.ringT > 2.6f) { phone.ringT = 0; audio.Play(AudioBank::Sfx::Ring, 0.7f); }
+        float lim = JF(Cfg()["instability"], "call_ignore_sec", 55);
+        if (phone.ignoreT > lim) {
+            if (phone.isWork) {
+                // blowing off a work call is dereliction - it goes in the log
+                deeds["call_ignored"]++;
+                ad.AddInstability(JF(Cfg()["instability"], "work_call_ignore_instab", 5.f));
+                Notify("You let a work call ring out. That's on the record.");
+                audio.Play(AudioBank::Sfx::Buzz, 0.45f);
+            } else {
+                // an ignored call ends badly - the persona's own on_ignore decides
+                ad.TriggerEffect(phone.ev["on_ignore"], office, vs);
+                ad.DropId(phone.anomalyId);
+                deeds["call_ignored"]++;
+                Notify("The ringing stops. Something feels worse.");
+                audio.Play(AudioBank::Sfx::Stinger, 0.5f);
+            }
+            phone = PhoneEvt{};
+        }
+    }
+}
+
+void Game::AnswerPhone() {
+    if (!phone.ringing || phone.ev.is_null()) return;
+    phone.ringing = false;
+    phone.answered = true;
+    deeds["call_answered"]++;
+    phone.transcript.push_back({JS(phone.ev, "persona"), JS(phone.ev, "greeting")});
+    phoneDlg.title = phone.isWork ? "INCOMING CALL" : "PHONE CALL";
+    phoneDlg.endLabel = "HANG UP";
+    phoneDlg.focused = true;
+    EnableCursor();
+    audio.Play(AudioBank::Sfx::Click, 0.6f);
+}
+
+void Game::PhoneSay(const std::string& text) {
+    if (!phone.answered || phoneReq != -1 || phoneEvalReq != -1) return;
+    phone.transcript.push_back({"You", text});
+    std::string convo;
+    // player lines are labelled CLERK - "You:" makes the model think those
+    // are its own turns, which is how echoes of the player's text got in
+    for (auto& [s, t] : phone.transcript)
+        convo += (s == "You" ? "Clerk" : s) + ": " + t + "\n";
+    LLMClient::Request r;
+    r.purpose = "phonecall";
+    r.systemPrompt = JS(phone.ev, "system") +
+        "\nStay in character. Reply with ONE short line of dialogue, nothing else. "
+        "Never repeat, quote, or echo the clerk's words back to them.";
+    r.user = convo;
+    phoneReq = llm.Submit(r);
+    phoneDlg.pendingReply = true;
+    phone.exchanges++;
+}
+
+void Game::HangUpPhone() {
+    if (!phone.answered) return;
+    if (phone.isWork) {
+        // mundane call - handling it properly steadies the room; answering
+        // and instantly hanging up counts as blowing it off
+        int said = 0;
+        for (auto& [s, t] : phone.transcript) if (s == "You") said++;
+        if (said > 0) {
+            ad.AddInstability(-3.5f);
+            deeds["call_handled"]++;
+            Notify("Call handled. Back to the shift.");
+        } else {
+            deeds["call_ignored"]++;
+            ad.AddInstability(JF(Cfg()["instability"], "work_call_ignore_instab", 5.f));
+            Notify("You picked up and hung up without a word. Logged.");
+            audio.Play(AudioBank::Sfx::Buzz, 0.45f);
+        }
+        phone = PhoneEvt{};
+        phoneDlg.Reset();
+        if (mode == Mode::Roam) DisableCursor();
+        return;
+    }
+    std::string convo;
+    for (auto& [s, t] : phone.transcript)
+        convo += (s == "You" ? "Clerk" : s) + ": " + t + "\n";
+    LLMClient::Request r;
+    r.purpose = "phoneeval";
+    r.systemPrompt = "You are judging a phone call with the entity described here: " +
+        JS(phone.ev, "system") +
+        "\nReply ONLY with JSON {\"match\":true/false,\"feedback\":\"one short sentence\"}. "
+        "match=true means the entity is SATISFIED; false means it is UPSET.";
+    r.user = convo.empty() ? "(the caller picked up and hung up without a word)" : convo;
+    phoneEvalReq = llm.Submit(r);
+}
+
+void Game::PhoneOutcome(bool calm) {
+    std::string persona = JS(phone.ev, "persona");
+    if (calm) {
+        ad.TriggerEffect(phone.ev["on_calm"], office, vs);
+        ad.TryResolve("office", phone.anomalyId, office, vs);   // resolving the call anomaly
+        deeds["call_calmed"]++;
+        deeds["anomaly_resolved"]++;
+        Notify(persona + " hangs up. The room settles.");
+        audio.Play(AudioBank::Sfx::Click, 0.5f);
+    } else {
+        ad.TriggerEffect(phone.ev["on_hostile"], office, vs);
+        ad.DropId(phone.anomalyId);
+        Notify("The line cuts to static. Whatever that was, it is unhappy.");
+        audio.Play(AudioBank::Sfx::Stinger, 0.7f);
+    }
+    phone = PhoneEvt{};
+    phoneDlg.Reset();
+    if (mode == Mode::Roam) DisableCursor();
+}
+
+void Game::PollLLM() {
+    LLMClient::Result res;
+    if (testReq != -1 && llm.Poll(testReq, res)) {
+        testReq = -1;
+        std::string t = res.text;
+        for (auto& c : t) if (c == '\n' || c == '\r') c = ' ';
+        testResult = t.empty() ? ("no reply (" + res.backend + ")")
+                               : (res.backend + " -> " + t.substr(0, 60));
+    }
+    if (dlgReq != -1 && llm.Poll(dlgReq, res)) {
+        dlgReq = -1; dlg.pendingReply = false;
+        vs.transcript.push_back({vs.Cur().Name(), res.text.empty() ? "..." : res.text});
+        audio.Play(AudioBank::Sfx::TypeTick, 0.4f);
+    }
+    if (repReq != -1 && llm.Poll(repReq, res)) {
+        repReq = -1;
+        TraceLog(LOG_INFO, "[llm] report verdict backend=%s match=%d id=%s",
+                 res.backend.c_str(), (int)res.match, res.matchedId.c_str());
+        if (!res.match)   // raw content on a miss - truncation/refusal shows here
+            TraceLog(LOG_WARNING, "[llm] report raw: %.220s", res.text.c_str());
+        // one-time heads-up when a real call was attempted but fell back
+        if (!offlineNotified && res.backend.rfind("stub:http", 0) == 0) {
+            offlineNotified = true;
+            Notify("Terminal offline (" + res.backend.substr(5) + ") - local keyword matching only.");
+        }
+        if (res.match && res.matchedId == "intruder") {
+            os.SetStatus("REPORT NOTED. THIS REQUIRES SECURITY - CALL NOW.");
+        } else if (res.match) {
+            ResolveOutcome o = ad.BeginResolve("office", res.matchedId, office, vs, true);
+            if (o.ok) {
+                os.SetStatus(res.feedback.empty() ? "REPORT ACCEPTED." : res.feedback);
+                int men = (!o.spawnedId.empty() || o.kind == "lights_office" || o.kind == "lights_out") ? 2 : 1;
+                DispatchCrew({o}, men, false);
+                deeds["report_filed"]++;
+                deeds["anomaly_resolved"]++;
+                Notify("Anomaly confirmed - maintenance dispatched.");
+                audio.Play(AudioBank::Sfx::Click, 0.7f);
+            } else os.SetStatus("REPORT ACCEPTED - already being handled.");
+        } else {
+            os.SetStatus(res.feedback.empty() ? "REPORT REJECTED." : res.feedback);
+            deeds["report_rejected"]++;
+            ad.AddInstability(JF(Cfg()["instability"], "report_fail_penalty", 14));
+            std::string hint = OtherChannelHint(repText, "office");
+            Notify(hint.empty() ? "The report was wrong. The room feels worse." : hint);
+            audio.Play(AudioBank::Sfx::Thump, 0.5f);
+        }
+    }
+    if (facReq != -1 && llm.Poll(facReq, res)) {
+        facReq = -1;
+        if (res.match && ad.KindOf(res.matchedId).rfind("figure", 0) == 0) {
+            // model matched a person - that's still Security's job
+            os.SetCallReply(JS(A.dialogs["stub"], "facilities_redirect_security"));
+        } else if (res.match) {
+            ResolveOutcome o = ad.BeginResolve("exterior", res.matchedId, office, vs, true);
+            if (o.ok) {
+                os.SetCallReply(res.feedback.empty() ? "I'll handle it." : res.feedback);
+                DispatchCrew({o}, (o.kind == "lights_out" || o.kind == "empty_room") ? 2 : 1, false);
+                deeds["anomaly_resolved"]++;
+                Notify("Facilities sent someone into the waiting room.");
+            } else os.SetCallReply("Crew's already on it.");
+        } else {
+            os.SetCallReply(res.feedback.empty() ? "Nothing on the cameras." : res.feedback);
+            ad.AddInstability(JF(Cfg()["instability"], "wrong_facilities_call_penalty", 10));
+            std::string hint = OtherChannelHint(facText, "exterior");
+            if (!hint.empty()) Notify(hint);
+        }
+    }
+    if (deskReq != -1 && llm.Poll(deskReq, res)) {
+        deskReq = -1;
+        os.SetCallReply(res.text.empty() ? "...line's dead." : res.text);
+    }
+    // generated cast for the next shift - sits in rosterRaw until NewShift
+    if (rosterReq != -1 && llm.Poll(rosterReq, res)) {
+        rosterReq = -1;
+        if (res.ok && !res.text.empty() && res.text.find('[') != std::string::npos)
+            rosterRaw = res.text;
+        else TraceLog(LOG_WARNING, "[roster] generation failed (%s) - stock cast next shift", res.backend.c_str());
+    }
+    // generated paperwork - sits in paperRaw until NewShift applies it
+    if (paperReq != -1 && llm.Poll(paperReq, res)) {
+        paperReq = -1;
+        if (res.ok && !res.text.empty() && res.text.find('[') != std::string::npos)
+            paperRaw = res.text;
+        else TraceLog(LOG_WARNING, "[paperwork] generation failed (%s) - stock forms tonight", res.backend.c_str());
+    }
+    // LLM-remix anomaly came back - validate against the parts catalog
+    if (remixReq != -1 && llm.Poll(remixReq, res)) {
+        remixReq = -1;
+        ad.remixPending = false;
+        std::string why;
+        if (ad.ApplyRemixJson(res.text, office, why)) {
+            TraceLog(LOG_INFO, "[remix] spawned: %.100s", res.text.c_str());
+            audio.Play(AudioBank::Sfx::Creak, 0.55f);
+            blackoutT = std::max(blackoutT, 0.07f);
+        } else {
+            TraceLog(LOG_WARNING, "[remix] rejected (%s): %.140s", why.c_str(), res.text.c_str());
+        }
+    }
+    if (phoneReq != -1 && llm.Poll(phoneReq, res)) {
+        phoneReq = -1; phoneDlg.pendingReply = false;
+        std::string reply = res.text.empty() ? "(static)" : res.text;
+        // LLM echo guard: the model sometimes parrots the player's own line
+        // back (in-character mirroring, "You:" speaker tags, quoted replies).
+        // Carve any verbatim echo of the last clerk line out of the reply.
+        if (!phone.transcript.empty() && phone.transcript.back().first == "You") {
+            const std::string& last = phone.transcript.back().second;
+            std::string low = ToLower(reply), lt = ToLower(last);
+            size_t p = lt.size() >= 4 ? low.find(lt) : std::string::npos;
+            if (p != std::string::npos) reply.erase(p, last.size());
+            // a stray "You:"/"Clerk:" speaker tag it invented - cut that line
+            for (const char* tag : {"You:", "Clerk:", "CLERK:", "Interviewer:"})
+                if (reply.rfind(tag, 0) == 0) {
+                    size_t nl = reply.find('\n');
+                    reply = nl == std::string::npos ? "" : reply.substr(nl + 1);
+                    break;
+                }
+            // collapse to the last non-empty line if it emitted several
+            size_t cut = reply.find('\n');
+            while (cut != std::string::npos) {
+                std::string rest = reply.substr(cut + 1);
+                if (rest.find_first_not_of(" \t") == std::string::npos) break;
+                reply = rest;                       // keep the tail (its actual line)
+                cut = reply.find('\n');
+            }
+            while (!reply.empty() && (reply.front() == ' ' || reply.front() == '"' ||
+                                      reply.front() == '\'')) reply.erase(0, 1);
+            while (!reply.empty() && (reply.back() == ' ' || reply.back() == '"'))
+                reply.pop_back();
+            if (reply.empty()) reply = "(static)";
+        }
+        phone.transcript.push_back({JS(phone.ev, "persona"), reply});
+        audio.Play(AudioBank::Sfx::TypeTick, 0.35f);
+        if (phone.exchanges >= JI(Cfg()["instability"], "call_max_exchanges", 4))
+            HangUpPhone();   // it has heard enough - judge the call
+    }
+    if (phoneEvalReq != -1 && llm.Poll(phoneEvalReq, res)) {
+        phoneEvalReq = -1;
+        PhoneOutcome(res.match);
+    }
+    // rate limit handling: save + pause once per cooldown (never on the menu)
+    if (llm.RateLimited() && !rlHandled && mode != Mode::Title) {
+        rlHandled = true;
+        Save();
+        pauseReason = "LLM RATE LIMIT - progress saved. Offline responses active (~1 min).";
+        pauseReturn = mode;
+        menuPage = 0;
+        mode = Mode::Pause;
+        EnableCursor();
+    } else if (!llm.RateLimited()) rlHandled = false;
+}
+
+// ---------- interactions ----------
+
+// furniture id -> player-facing label ("wr_bench_1" -> "Bench")
+static std::string PrettyName(std::string id) {
+    for (const char* p : {"wr_", "anom_", "rx_"})
+        if (id.rfind(p, 0) == 0) { id.erase(0, std::strlen(p)); break; }
+    size_t u = id.rfind('_');
+    if (u != std::string::npos && u + 1 < id.size() &&
+        std::all_of(id.begin() + u + 1, id.end(), [](char ch) { return std::isdigit((unsigned char)ch); }))
+        id.erase(u);
+    for (auto& c : id) if (c == '_') c = ' ';
+    if (!id.empty()) id[0] = (char)std::toupper((unsigned char)id[0]);
+    return id;
+}
+
+void Game::DoInteract() {
+    if (!interactTarget) return;
+    const std::string& it = interactTarget->interact;
+    if (it == "sit") SitDown();
+    else if (it == "sit_monitor") {
+        // touching the monitor = intent to use the computer - go straight to it
+        SitDown();
+        mode = Mode::SitComputer;
+        dlg.focused = false;
+        RefocusOsField();
+        SetMousePosition(GetScreenWidth() / 2, GetScreenHeight() / 2);
+    }
+    else if (it == "switch") {
+        manualLightsOff = !manualLightsOff;
+        deeds["lights_used"]++;
+        audio.Play(AudioBank::Sfx::Click, 0.8f);
+        if (ad.HasKind("lights_office"))
+            Notify("The switch clicks uselessly. The lights stay dead.");
+        else
+            Notify(manualLightsOff ? "You flick the office lights off." : "You flick the office lights on.");
+    }
+    else if (it == "blinds") {
+        office.blindsOpen = !office.blindsOpen;
+        deeds["blinds_used"]++;
+        audio.Play(AudioBank::Sfx::Click, 0.7f);
+        Notify(office.blindsOpen ? "Blinds open." : "Blinds closed.");
+    } else if (it == "phone") {
+        if (phone.ringing) {
+            if (interactTarget->hidden) Notify("Your hand finds the handset in the dark.");
+            AnswerPhone();
+        }
+        else { audio.Play(AudioBank::Sfx::Click, 0.4f); Notify("Just a dial tone."); }
+    } else if (it == "note") {
+        // a slid-in / misplaced note is readable - lore slips delivered by
+        // whoever keeps writing them
+        auto& pool = A.dialogs["lore_notes"];
+        loreText = pool.is_array() && !pool.empty()
+            ? pool[RandInt(0, (int)pool.size() - 1)].get<std::string>()
+            : std::string("the building keeps what it takes.");
+        loreCardT = 16.f;
+        deeds["lore_found"]++;
+        audio.Play(AudioBank::Sfx::TypeTick, 0.5f);
+    } else if (it == "door") {
+        if (vs.VisitorAtDoor()) {
+            doorOpen = false;                     // open anim is driven by the walk-through
+            vs.InviteIn();
+            audio.Play(AudioBank::Sfx::Whoosh, 0.7f);
+            Notify(vs.Cur().Name() + " is coming in. Get seated.");
+        } else {
+            doorOpen = !doorOpen;                 // peek into the waiting room
+            audio.Play(AudioBank::Sfx::Creak, 0.55f);
+            Notify(doorOpen ? "You ease the door open a crack." : "You pull the door shut.");
+        }
+    }
+}
+
+// re-focus whichever fake-OS text field is on screen when sitting back down
+// or TAB-ing to the monitor - no extra click needed to keep typing
+void Game::RefocusOsField() {
+    if (os.app == FakeOS::App::Report) os.reqFocusReport = true;
+    else if (os.app == FakeOS::App::Phone && !os.phoneActive.empty() && os.phoneActive != "security")
+        os.reqFocusCall = true;
+}
+
+void Game::SitDown() {
+    if (phone.answered) HangUpPhone();   // can't juggle the handset and the desk
+    mode = vs.VisitorSeated() ? Mode::SitVisitor : Mode::SitComputer;
+    // plant the player at the chair so the camera animates into it and they
+    // stand back up in the right spot
+    player.pos = {office.seatCam.x, 0.f, office.seatCam.z};
+    player.yaw = 180.f;
+    player.pitch = 0.f;
+    sitT = 0;
+    lean = 0;
+    camRoll = 0; cam.up = {0.f, 1.f, 0.f};   // seated views stay level
+    sitFromPos = cam.position; sitFromTgt = cam.target;
+    fovFrom = cam.fovy;
+    EnableCursor();
+    // the E press that sat us down already queued an 'e' char - flush it now
+    // so no freshly-focused field types it (the focusGrace windows below are
+    // the second line of defense)
+    while (GetCharPressed() > 0) {}
+    dlg.focused = (mode == Mode::SitVisitor);
+    if (mode == Mode::SitComputer) {
+        RefocusOsField();
+        // hardware cursor starts where the crosshair was - the in-world OS
+        // dot is the cursor while seated
+        SetMousePosition(GetScreenWidth() / 2, GetScreenHeight() / 2);
+    }
+}
+
+void Game::StandUp() {
+    mode = Mode::Unseating;
+    unseatT = 0;
+    // step out behind the spot we actually sat in - NOT the chair's live furni
+    // position, which an anomaly may have carried across the room while we hid
+    // under the desk (that read as a teleport)
+    if (const Furni* desk = office.Find("desk")) {
+        Vector2 d{office.seatCam.x - desk->pos.x, office.seatCam.z - desk->pos.z};
+        float l = std::sqrt(d.x * d.x + d.y * d.y);
+        if (l < 0.01f) { d = {0.f, 1.f}; l = 1; }
+        player.pos = {office.seatCam.x + d.x / l * 0.95f, 0.f,
+                      office.seatCam.z + d.y / l * 0.95f};
+    }
+    unseatFromPos = cam.position; unseatFromTgt = cam.target;
+    EnableCursor();
+}
+
+// ---------- update ----------
+
+void Game::UpdateRoam(float dt) {
+    auto solids = office.Solids();
+    // the swung-open panel is real geometry once the door moves off its frame
+    if (doorAnim > 0.05f) {
+        if (const Furni* d = office.Find("door")) {
+            float a = d->rotY * DEG2RAD;
+            Vector2 h = {d->pos.x - d->size.x / 2, d->pos.z};           // hinge
+            Vector2 e = {h.x + std::cos(a) * d->size.x,
+                         h.y - std::sin(a) * d->size.x};                // free edge
+            solids.push_back({{std::min(h.x, e.x) - 0.1f, 0.f, std::min(h.y, e.y) - 0.1f},
+                              {std::max(h.x, e.x) + 0.1f, 2.4f, std::max(h.y, e.y) + 0.1f}});
+        }
+    }
+    // crouch-under-desk: drop the desk's collision box while low so the player
+    // can slip beneath it, and stay crouched until fully clear of it
+    bool underDesk = false;
+    if (const Furni* desk = office.Find("desk")) {
+        AABB db{{desk->pos.x - desk->size.x / 2 - 0.08f, 0.f, desk->pos.z - desk->size.z / 2 - 0.08f},
+                {desk->pos.x + desk->size.x / 2 + 0.08f, 0.8f, desk->pos.z + desk->size.z / 2 + 0.08f}};
+        underDesk = player.pos.x > db.mn.x && player.pos.x < db.mx.x &&
+                    player.pos.z > db.mn.z && player.pos.z < db.mx.z;
+        if (player.crouching || underDesk) {
+            AABB ds = BottomBox(desk->pos, desk->size);
+            std::erase_if(solids, [&](const AABB& s) {
+                return std::fabs(s.mn.x - ds.mn.x) < 0.01f && std::fabs(s.mn.z - ds.mn.z) < 0.01f;
+            });
+            // the desk stops being a slab but its WALLS stay real: side legs
+            // and the modesty panel (visitor side) still block a low player,
+            // leaving the chair-side edge as the only way in/out
+            float a = desk->rotY * DEG2RAD, ca = std::cos(a), sa = std::sin(a);
+            auto part = [&](float lx, float lz, float w, float d, float h) {
+                float ox = lx * ca + lz * sa, oz = -lx * sa + lz * ca;
+                float hx = (std::fabs(w * ca) + std::fabs(d * sa)) / 2;
+                float hz = (std::fabs(w * sa) + std::fabs(d * ca)) / 2;
+                solids.push_back({{desk->pos.x + ox - hx, 0.f, desk->pos.z + oz - hz},
+                                  {desk->pos.x + ox + hx, h, desk->pos.z + oz + hz}});
+            };
+            part(-desk->size.x / 2 + 0.08f, 0.f, 0.16f, desk->size.z, desk->size.y);          // legs (full depth)
+            part(desk->size.x / 2 - 0.08f, 0.f, 0.16f, desk->size.z, desk->size.y);
+            part(0.f, -desk->size.z / 2 + 0.04f, desk->size.x - 0.32f, 0.09f,
+                 desk->size.y - 0.1f);                                                        // back panel, flush to legs
+            part(desk->size.x / 2 - 0.41f, 0.10f, 0.5f, desk->size.z - 0.44f,
+                 desk->size.y - 0.1f);                                                        // drawer pedestal
+        }
+    }
+    player.forcedCrouch = underDesk;
+
+    if (flycam) {
+        // F4 debug fly camera: the player body stays put and untouched while
+        // the lens roams - WASD fly, SPACE/CTRL vertical, F6 drops the player
+        // at the camera (ground level) for collision/nav testing
+        Vector2 md = GetMouseDelta();
+        player.yaw -= md.x * sens;
+        player.pitch = std::clamp(player.pitch - md.y * sens, -89.f, 89.f);
+        Vector3 f = player.Forward();
+        float yr = player.yaw * DEG2RAD;
+        Vector3 rt{-std::cos(yr), 0.f, std::sin(yr)};
+        float spd = IsKeyDown(keys.sprint) ? 9.f : 3.2f;
+        Vector3 mv{0, 0, 0};
+        if (IsKeyDown(keys.fwd))   { mv.x += f.x;  mv.y += f.y;  mv.z += f.z; }
+        if (IsKeyDown(keys.back))  { mv.x -= f.x;  mv.y -= f.y;  mv.z -= f.z; }
+        if (IsKeyDown(keys.right)) { mv.x += rt.x; mv.z += rt.z; }
+        if (IsKeyDown(keys.left))  { mv.x -= rt.x; mv.z -= rt.z; }
+        if (IsKeyDown(KEY_SPACE))        mv.y += 1.f;
+        if (IsKeyDown(KEY_LEFT_CONTROL)) mv.y -= 1.f;
+        flyPos.x += mv.x * spd * dt;
+        flyPos.y += mv.y * spd * dt;
+        flyPos.z += mv.z * spd * dt;
+        player.moving = false;
+        player.strafe = 0; player.moveAmt = 0;
+        cam.position = flyPos;
+        cam.target = {flyPos.x + f.x, flyPos.y + f.y, flyPos.z + f.z};
+        cam.up = {0.f, 1.f, 0.f}; camRoll = 0;
+        cam.fovy += (fovBase - cam.fovy) * std::min(1.f, dt * 6.f);
+        interactTarget = nullptr;
+        interactLabel.clear();
+        if (IsKeyPressed(KEY_F6)) {
+            player.pos = {flyPos.x, 0.f, flyPos.z};
+            Notify("[flycam] player teleported to lens position");
+        }
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            pauseReturn = mode; pauseReason.clear(); menuPage = 0;
+            mode = Mode::Pause; EnableCursor();
+        }
+        return;
+    }
+
+    // look + move pause while the phone-call panel is up so the cursor can
+    // type/click - you're holding a handset, not pacing the room
+    player.Update(dt, solids, office.bounds, !phone.answered, !phone.answered, sens,
+                  JF(Cfg()["game"], "sprint_mul", 1.6f),
+                  JF(Cfg()["game"], "crouch_height", 0.55f), keys);
+    player.hiding = underDesk && player.crouching;   // danger events miss you here
+
+    // find interactable
+    interactTarget = nullptr;
+    interactLabel.clear();
+    Vector3 eye = player.Eye(), fwd = player.Forward();
+    float bestT = JF(Cfg()["game"], "interact_distance", 2.6f);
+    for (auto& f : office.items) {
+        if (f.interact.empty() || f.room != "office") continue;
+        // a ringing handset can still be found in the dark even if the
+        // phone prop "vanished" - otherwise an unanswered call is unfair
+        if (f.hidden && !(phone.ringing && f.interact == "phone")) continue;
+        if (f.interact == "sit_monitor") {      // chair-side + close only
+            if (player.pos.z <= f.pos.z + 0.32f ||
+                std::fabs(player.pos.x - f.pos.x) > 1.35f ||
+                player.pos.z - f.pos.z > 2.3f) continue;
+        }
+        float t;
+        if (f.interact == "door") {
+            // ray vs the swung panel itself: hinge edge pinned at local -x,
+            // panel sweeps with rotY - aim at the door where it IS, not
+            // where it hangs when closed
+            float a = f.rotY * DEG2RAD;
+            Vector3 c{f.pos.x - f.size.x / 2 + std::cos(a) * f.size.x / 2,
+                      f.pos.y + f.size.y / 2,
+                      f.pos.z - std::sin(a) * f.size.x / 2};
+            t = RayVsOBB_Y(eye, fwd, c,
+                           {f.size.x / 2 + 0.1f, f.size.y / 2, f.size.z / 2 + 0.12f}, a);
+        } else if (f.interact == "blinds") {
+            // slats move with anomaly mutations; once raised they stack at
+            // the top rail, which becomes the (thinner) grab zone
+            float a = f.rotY * DEG2RAD;
+            float hh = office.blindsOpen ? 0.28f : f.size.y / 2;
+            float cy = office.blindsOpen ? f.pos.y + f.size.y - 0.2f
+                                       : f.pos.y + f.size.y / 2;
+            t = RayVsOBB_Y(eye, fwd, {f.pos.x, cy, f.pos.z},
+                           {f.size.x / 2 + 0.1f, hh, f.size.z / 2 + 0.14f}, a);
+        } else {
+            t = RayVsAABB(eye, fwd, BottomBox(f.pos, f.size + Vector3{0.16f, 0.16f, 0.16f}));
+        }
+        if (t >= 0 && t < bestT) { bestT = t; interactTarget = &f; }
+    }
+    // look-at-name ray: same geometry rules so a swung door still names "Door"
+    auto lookT = [&](const Furni& f, float pad) {
+        if (f.type == "door") {
+            float a = f.rotY * DEG2RAD;
+            Vector3 c{f.pos.x - f.size.x / 2 + std::cos(a) * f.size.x / 2,
+                      f.pos.y + f.size.y / 2,
+                      f.pos.z - std::sin(a) * f.size.x / 2};
+            return RayVsOBB_Y(eye, fwd, c, {f.size.x / 2 + pad, f.size.y / 2, f.size.z / 2 + pad}, a);
+        }
+        if (f.type == "blinds") {
+            float a = f.rotY * DEG2RAD;
+            float hh = office.blindsOpen ? 0.28f : f.size.y / 2;
+            float cy = office.blindsOpen ? f.pos.y + f.size.y - 0.2f
+                                       : f.pos.y + f.size.y / 2;
+            return RayVsOBB_Y(eye, fwd, {f.pos.x, cy, f.pos.z},
+                              {f.size.x / 2 + pad, hh, f.size.z / 2 + pad}, a);
+        }
+        return RayVsAABB(eye, fwd, BottomBox(f.pos, f.size + Vector3{pad, pad, pad}));
+    };
+    std::string ek = "[" + std::string(KeyName(keys.interact)) + "]";
+    if (interactTarget) {
+        if (interactTarget->interact == "sit") interactLabel = "Sit at your desk  " + ek;
+        else if (interactTarget->interact == "sit_monitor") interactLabel = "Sit at the computer  " + ek;
+        else if (interactTarget->interact == "switch") interactLabel =
+            manualLightsOff ? "Turn the lights on  " + ek : "Turn the lights off  " + ek;
+        else if (interactTarget->interact == "blinds") interactLabel =
+            office.blindsOpen ? "Close blinds  " + ek : "Open blinds  " + ek;
+        else if (interactTarget->interact == "phone") interactLabel =
+            phone.ringing ? "Answer the phone  " + ek : "Desk phone";
+        else if (interactTarget->interact == "door") interactLabel =
+            vs.VisitorAtDoor() ? "Invite them in  " + ek
+                               : (doorOpen ? "Close the door  " + ek : "Open the door  " + ek);
+        else if (interactTarget->interact == "note") interactLabel = "Read the note  " + ek;
+    }
+    // name whatever furniture the player is looking at - knowing the exact
+    // object name is what makes writing a valid report possible
+    const Furni* lookF = interactTarget;
+    float lt = 7.5f, lt2 = interactTarget ? bestT : 7.5f;
+    if (!interactTarget) {
+        for (auto& f : office.items) {
+            if (f.hidden || (f.room != "office" && f.room != "waiting")) continue;
+            float t = lookT(f, 0.12f);
+            if (t >= 0 && t < lt2) { lt2 = t; lookF = &f; }
+        }
+    }
+    (void)lt;
+    // while hiding, the only thing to name is the desk wall in your face -
+    // skip the chip so it doesn't fight the taped-note card
+    if (interactLabel.empty() && lookF && !player.hiding) interactLabel = PrettyName(lookF->id);
+    if (IsKeyPressed(keys.interact)) DoInteract();
+    // ESC hangs up first - pause only when not holding the handset
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        if (phone.answered) HangUpPhone();
+        else { pauseReturn = mode; pauseReason.clear(); menuPage = 0; mode = Mode::Pause; EnableCursor(); }
+    }
+
+    // ---- presence: footsteps, strafe lean, breath, settle, sprint fov ----
+    // footstep lands each time the head-bob crosses zero - cadence is free
+    float sb = std::sin(player.bobT);
+    if (player.moving && lastBobSin * sb < 0.f) {
+        stepSide = -stepSide;
+        audio.PlayPanned(AudioBank::Sfx::Step,
+                         player.sprinting ? 0.55f : player.crouching ? 0.18f : 0.34f,
+                         0.5f + stepSide * 0.18f);
+    }
+    lastBobSin = player.moving ? sb : 0.f;
+    // a small settle dip when a walk/sprint stops
+    if (wasMoving && !player.moving) settleDip = 1.f;
+    wasMoving = player.moving;
+    settleDip = std::max(0.f, settleDip - dt * 3.2f);
+    float dip = -std::sin(settleDip * 3.14159f) * 0.045f * settleDip;
+
+    // strafe lean: camera rolls a couple of degrees into lateral movement
+    float rollTgt = -player.strafe * (player.sprinting ? 3.0f : 2.2f);
+    camRoll += (rollTgt - camRoll) * std::min(1.f, dt * 8.f);
+    cam.up = {std::sin(camRoll * DEG2RAD), std::cos(camRoll * DEG2RAD), 0.f};
+    // sprint widens fov a touch for speed
+    cam.fovy += ((player.sprinting ? fovBase + 4.5f : fovBase) - cam.fovy) *
+                std::min(1.f, dt * 4.f);
+
+    // idle breathing is stronger than walk sway; lateral hip sway while moving
+    float breath = std::sin((float)GetTime() * 1.35f) * (0.004f + 0.005f * (1.f - player.moveAmt));
+    float swayX = std::cos(player.bobT * 0.5f) * 0.02f * player.moveAmt;
+    Vector3 e = player.Eye();
+    Vector3 f = player.Forward();
+    float yr = player.yaw * DEG2RAD;
+    Vector3 rt{-std::cos(yr), 0, std::sin(yr)};
+    float bobY = player.BobOffset() + breath + dip;
+    cam.position = {e.x + rt.x * swayX, e.y + bobY, e.z + rt.z * swayX};
+    cam.target = {e.x + f.x + rt.x * swayX, e.y + bobY + f.y, e.z + f.z + rt.z * swayX};
+}
+
+void Game::UpdateSeated(float dt) {
+    // smooth sit-down blend
+    sitT = std::min(1.f, sitT + dt * 1.7f);
+    float k = sitT * sitT * (3 - 2 * sitT);
+
+    // lean: hold A = peek left toward the visitor, hold D = peek right toward window.
+    // Suppressed while a text field has focus so A/D type instead of lean.
+    bool typing = (mode == Mode::SitComputer) ? os.typing : dlg.focused;
+    float lt = typing ? 0.f : (IsKeyDown(keys.left) ? -1.f : 0.f) + (IsKeyDown(keys.right) ? 1.f : 0.f);
+    lean += (lt - lean) * std::min(1.f, dt * 7.f);
+    float la = std::fabs(lean);
+
+    Vector3 scrC = office.MonitorScreenCenter();
+    Vector3 seatPos = office.seatCam;
+    Vector3 baseTgt = office.lookVisitor;
+    float fovTgt = fovBase;
+    if (mode == Mode::SitComputer) {
+        // lean in close to the monitor so the OS is readable
+        seatPos = {scrC.x, scrC.y + 0.06f, scrC.z + 0.64f};
+        baseTgt = scrC;
+        fovTgt = 46.f;
+    }
+    Vector3 leanTgt = (lean < 0) ? office.lookVisitor : office.WindowCenter();
+    Vector3 pos{seatPos.x + lean * 0.45f, seatPos.y + la * 0.05f, seatPos.z - la * 0.08f};
+    Vector3 tgt{baseTgt.x + (leanTgt.x - baseTgt.x) * la,
+                baseTgt.y + (leanTgt.y - baseTgt.y) * la,
+                baseTgt.z + (leanTgt.z - baseTgt.z) * la};
+    if (k < 1.f) {
+        cam.position.x = sitFromPos.x + (pos.x - sitFromPos.x) * k;
+        cam.position.y = sitFromPos.y + (pos.y - sitFromPos.y) * k;
+        cam.position.z = sitFromPos.z + (pos.z - sitFromPos.z) * k;
+        cam.target.x = sitFromTgt.x + (tgt.x - sitFromTgt.x) * k;
+        cam.target.y = sitFromTgt.y + (tgt.y - sitFromTgt.y) * k;
+        cam.target.z = sitFromTgt.z + (tgt.z - sitFromTgt.z) * k;
+    } else {
+        // seated: damp toward goal so TAB/lean transitions stay smooth
+        float s = std::min(1.f, dt * 9.f);
+        cam.position.x += (pos.x - cam.position.x) * s;
+        cam.position.y += (pos.y - cam.position.y) * s;
+        cam.position.z += (pos.z - cam.position.z) * s;
+        cam.target.x += (tgt.x - cam.target.x) * s;
+        cam.target.y += (tgt.y - cam.target.y) * s;
+        cam.target.z += (tgt.z - cam.target.z) * s;
+    }
+    float fovGoal = fovTgt + la * (fovBase - fovTgt);
+    cam.fovy += (fovGoal - cam.fovy) * std::min(1.f, dt * 6.f);
+
+    if (IsKeyPressed(keys.swap)) {
+        mode = (mode == Mode::SitComputer) ? Mode::SitVisitor : Mode::SitComputer;
+        audio.Play(AudioBank::Sfx::Click, 0.4f);
+        dlg.focused = (mode == Mode::SitVisitor);
+        if (mode == Mode::SitComputer) RefocusOsField();
+    }
+    // ESC stands up from the chair; pause is one more press away on your feet
+    if (IsKeyPressed(KEY_ESCAPE)) { StandUp(); return; }
+
+    os.Update(dt);
+}
+
+void Game::UpdateUnseating(float dt) {
+    unseatT = std::min(1.f, unseatT + dt * 2.4f);
+    float k = unseatT * unseatT * (3 - 2 * unseatT);
+    Vector3 eye = player.Eye();
+    Vector3 f = player.Forward();
+    Vector3 roamTgt{eye.x + f.x, eye.y + f.y, eye.z + f.z};
+    cam.position.x = unseatFromPos.x + (eye.x - unseatFromPos.x) * k;
+    cam.position.y = unseatFromPos.y + (eye.y - unseatFromPos.y) * k;
+    cam.position.z = unseatFromPos.z + (eye.z - unseatFromPos.z) * k;
+    cam.target.x = unseatFromTgt.x + (roamTgt.x - unseatFromTgt.x) * k;
+    cam.target.y = unseatFromTgt.y + (roamTgt.y - unseatFromTgt.y) * k;
+    cam.target.z = unseatFromTgt.z + (roamTgt.z - unseatFromTgt.z) * k;
+    cam.fovy += (fovBase - cam.fovy) * std::min(1.f, dt * 6.f);
+    if (unseatT >= 1.f) { mode = Mode::Roam; DisableCursor(); }
+    // mid-stand ESC still pauses; resume drops back into the same blend
+    if (IsKeyPressed(KEY_ESCAPE)) {
+        pauseReturn = mode; pauseReason.clear(); menuPage = 0;
+        mode = Mode::Pause; EnableCursor();
+    }
+}
+
+void Game::UpdateCommon(float dt) {
+    gameHour += dt / JF(Cfg()["game"], "real_seconds_per_game_hour", 200.f);
+    if (gameHour >= JF(Cfg()["game"], "shift_end_hour", 30.f)) {
+        WinShift(false);
+        return;
+    }
+    // the whole book is done - nobody left to interview, nobody mid-visit.
+    // Clock out early after a short settle beat instead of watching the
+    // clock run to 6 AM. Never fires mid-breach or mid-scare.
+    if (earlyEndT >= 0.f) {
+        earlyEndT -= dt;
+        if (earlyEndT <= 0.f) { earlyEndT = -1.f; WinShift(true); return; }
+    } else if (breachRush < 0.f && breachSearchT <= 0.f && !phone.ringing &&
+               !phone.answered && mode != Mode::Jumpscare && AllVisitorsDone()) {
+        earlyEndT = JF(Cfg()["game"], "early_end_delay_sec", 5.f);
+        Notify("Every name on the book is accounted for. The building lets you go.");
+        audio.Play(AudioBank::Sfx::Whoosh, 0.4f);
+    }
+    vs.doorOpen = doorOpen;   // semantic door truth - visitors watch it every
+                              // frame alongside the live panel angle
+    vs.Update(dt, gameHour, office,
+              [this](const std::string& s) { Notify(s); },
+              [this] { audio.Play(AudioBank::Sfx::Knock, 0.9f); shake = std::max(shake, 0.2f); },
+              [this](Vector3 from) {
+                  // the vault lands on whoever's in the chair. Caught across
+                  // the room it just proves it was never a person - loudly
+                  float dx = player.pos.x - office.seatCam.x, dz = player.pos.z - office.seatCam.z;
+                  bool inRange = (mode == Mode::SitVisitor || mode == Mode::SitComputer ||
+                                  mode == Mode::Unseating) || (dx * dx + dz * dz < 4.8f);
+                  if (inRange) {
+                      deathTitle = "IT CAME OVER THE DESK";
+                      Jumpscare("lunge");
+                  } else {
+                      deeds["anomaly_released"]++;
+                      ad.AddInstability(JF(Cfg()["instability"], "release_instab", 14.f));
+                      Notify("It vaulted the desk at an empty chair and kept going. It was never a person.");
+                      audio.Play(AudioBank::Sfx::Stinger, 0.7f);
+                  }
+                  (void)from;
+              });
+
+    // a visitor who walks out un-interviewed is a write-up on your record.
+    // anomalous visitors are exempt - Security on them WAS the correct answer
+    {
+        VState vst = vs.Cur().state;
+        if (vst == VState::ToDoor && lastVState != VState::ToDoor) askedCur = false;
+        if (lastVState == VState::Seated && (vst == VState::Leaving || vst == VState::Gone) &&
+            !askedCur && vs.Cur().anomaly.empty()) {
+            deeds["visitor_missed"]++;
+            Notify("WARNING ISSUED - " + vs.Cur().Name() +
+                   " left without a proper interview. It goes on your record.");
+            notes.back().second = 10.f;
+            audio.Play(AudioBank::Sfx::Buzz, 0.55f);
+        }
+        // ...but an anomalous one who talked their way through the interview
+        // and walked out under their own power is worse. It only registers
+        // once they're actually gone - out of the room, out of the building
+        if (lastVState == VState::Leaving && vst == VState::Gone &&
+            !vs.Cur().anomaly.empty() && !vs.Cur().escorted) {
+            deeds["anomaly_released"]++;
+            ad.AddInstability(JF(Cfg()["instability"], "release_instab", 14.f));
+            Notify("LOGGING ERROR - " + vs.Cur().Name() +
+                   " was never cleared to leave. Your signature let it out.");
+            notes.back().second = 10.f;
+            audio.Play(AudioBank::Sfx::Stinger, 0.55f);
+        }
+        lastVState = vst;
+    }
+
+    // a typed dismissal wraps the interview up on its own - "that's all",
+    // "you can go", etc. The visitor answers, then rises and leaves
+    if (autoEndT > 0.f) {
+        autoEndT -= dt;
+        if (autoEndT <= 0.f) {
+            autoEndT = -1.f;
+            if (vs.VisitorSeated()) {
+                vs.EndInterview();
+                Notify(vs.Cur().Name() + " takes the hint and wraps up.");
+            }
+        }
+    }
+
+    // a visitor who lets themselves in through an open door still pulls it
+    // shut behind them once they're through the doorway
+    if (!visitorClosedDoor && doorOpen && vs.HasActiveVisitor() &&
+        vs.Cur().state == VState::ToChair && vs.Cur().pos.z > -4.6f) {
+        visitorClosedDoor = true;
+        doorOpen = false;
+        Notify(vs.Cur().Name() + " pulls the door shut behind them.");
+        audio.Play(AudioBank::Sfx::Creak, 0.45f);
+    }
+    if (vs.Cur().state == VState::ToDoor || vs.Cur().state == VState::AtDoor)
+        visitorClosedDoor = false;
+
+    // finishing the whole book AND the whole forms queue pays off
+    if (!allDutiesToasted && AllDutiesDone()) {
+        allDutiesToasted = true;
+        deeds["clean_shift"]++;
+        ad.AddInstability(-6.f);
+        Notify("All duties complete - the office settles. Good clerk.");
+        audio.Play(AudioBank::Sfx::Whoosh, 0.45f);
+    }
+
+    int anomsBefore = ad.ActiveCount();
+    ad.Update(dt, gameHour, office, vs,
+              [this](const std::string& s) { Notify(s); },
+              [this] { OnIntruderStrike(); });
+    // keep the visitor channel synced with who's actually in the chair BEFORE
+    // counting - visitor anomalies land via EnsureVisitor, not ad.Update
+    if (vs.VisitorSeated() && !vs.Cur().anomaly.empty())
+        ad.EnsureVisitor(vs.Cur().anomaly);
+    if (!vs.HasActiveVisitor() || vs.Cur().state == VState::Leaving || vs.Cur().state == VState::Gone)
+        ad.ClearChannel("visitor");
+
+    if (ad.ActiveCount() > anomsBefore) {
+        deeds["anomaly_seen"] += ad.ActiveCount() - anomsBefore;
+        // "something changed" cue - a creak, a dip in the lights, a felt note
+        audio.Play(AudioBank::Sfx::Creak, 0.6f);
+        blackoutT = std::max(blackoutT, 0.07f);
+        Notify("Something about the room is different.");
+        Tut("spawn", "Something changed. Office oddities go in the REPORT app - people and things outside go by PHONE.");
+    }
+    // night-1 tutorial triggers: teach the job as things happen
+    if (night == 1) {
+        if (phone.ringing) Tut("ring", "The desk phone is ringing - walk to it and press [" + std::string(KeyName(keys.interact)) + "].");
+        if (vs.VisitorAtDoor()) Tut("door", "Someone's at the door - press [" + std::string(KeyName(keys.interact)) + "] to let them in, then sit across from them.");
+        if (vs.VisitorSeated()) Tut("sit", "Sit at your desk [" + std::string(KeyName(keys.interact)) + "] to interview. [" + KeyName(keys.swap) + "] swaps between monitor and visitor.");
+        if (ad.Instability() > 30.f) Tut("paper", "Terminal > PAPERWORK: filing a form holds the building still for a while.");
+    }
+    UpdateCrew(dt);
+    // anomaly move glides: the object scrapes into its new spot over ~0.6s
+    // (each fresh one lands with a screech + a flinch, once)
+    office.Update(dt);
+    for (auto& g : office.moveGlides) {
+        if (g.announced) continue;
+        g.announced = true;
+        audio.Play(AudioBank::Sfx::Screech, 0.85f);
+        shake = std::max(shake, 0.10f);
+    }
+    // the hall door gives way for bodies passing through it (crew, visitors,
+    // ambient leavers) instead of everyone clipping a shut panel
+    {
+        bool near = false;
+        auto closeToHall = [](Vector3 p) {
+            // covers the doorway and the corridor behind it (incl. the turn)
+            return p.x > 4.2f && p.x < 9.6f && p.z < -9.2f && p.z > -13.4f;
+        };
+        for (auto& e : crew) for (auto& m : e.men) if (closeToHall(m.pos)) near = true;
+        if (vs.Cur().Active() && closeToHall(vs.Cur().pos)) near = true;
+        for (auto& a : vs.ambient) if (closeToHall(a.pos)) near = true;
+        if (Furni* hd = office.Find("hall_door"))
+            hd->rotY += ((near ? -100.f : 0.f) - hd->rotY) * std::min(1.f, dt * 5.f);
+    }
+
+    // ---- animated anomaly kinds - flag-driven, run every frame ----
+    // a folded note slid under the door keeps creeping inward until it
+    // settles just inside the doorway (crew carry it out on resolve)
+    if (ad.HasKind("note_slid"))
+        if (Furni* n = office.Find("anom_note")) {
+            const float zt = -4.28f;
+            if (n->pos.z < zt) {
+                n->pos.z += (zt - n->pos.z) * std::min(1.f, dt * 0.55f);
+                if (n->pos.z > -4.5f && !noteSfx) {
+                    noteSfx = true;
+                    audio.Play(AudioBank::Sfx::TypeTick, 0.5f);   // paper whisper
+                }
+            }
+        }
+    // the visitor chair slowly turns; a crew that's reached it holds it still
+    if (ad.HasKind("spin_chair")) {
+        bool held = false;
+        for (auto& e : crew) if (e.phase >= 1)
+            for (auto& o : e.outcomes) if (o.kind == "spin_chair") held = true;
+        if (!held) if (Furni* c = office.Find("visitor_chair")) c->rotY += dt * 22.f;
+    }
+    // desk drawer open flag -> office.cpp slides a drawer out by drawerT;
+    // while the assigned crew works it they're physically pushing it back
+    office.drawerOpen = ad.HasKind("desk_drawer");
+    bool drawerWorked = false;
+    for (auto& e : crew) if (e.phase == 1)
+        for (auto& o : e.outcomes) if (o.kind == "desk_drawer") drawerWorked = true;
+    float drawerGoal = (office.drawerOpen && !drawerWorked) ? 1.f : 0.f;
+    office.drawerT += (drawerGoal - office.drawerT) *
+                      std::min(1.f, dt * (drawerWorked ? 1.1f : 4.f));
+    // scratching and whispering inside the waiting room walls
+    if (ad.HasKind("hall_writing")) {
+        hallWhisperT -= dt;
+        if (hallWhisperT <= 0.f) {
+            hallWhisperT = RandRange(2.0f, 5.0f);
+            audio.Play(RandRange(0.f, 1.f) < 0.6f ? AudioBank::Sfx::TypeTick
+                                                  : AudioBank::Sfx::Creak,
+                       RandRange(0.15f, 0.3f));
+        }
+    }
+
+    // what things with eyes / mutated NPCs should track
+    office.eyeTarget = player.Eye();
+    vs.playerPos = player.pos;
+
+    // anomaly banging: each swing lands with a real knock + a flinch; hits
+    // on the DOOR shudder the panel itself (a transient jitter on rotY that
+    // the swing code then overwrites back - reads as the panel taking blows)
+    if (vs.BangerStrike()) {
+        audio.Play(AudioBank::Sfx::Knock, vs.bangerAt == "door" ? 0.95f : 0.75f);
+        shake = std::max(shake, 0.14f);
+        if (vs.bangerAt == "door") doorRattle = 1.f;
+    }
+    doorRattle = std::max(0.f, doorRattle - dt * 6.f);
+
+    ad.freeform = !hardcodedOnly;
+
+    // a call-event anomaly rolled: desk phone starts ringing
+    if (!ad.pendingCall.is_null() && !phone.ringing && !phone.answered) {
+        phone.ev = ad.TakeCallEvent();
+        phone.isWork = false;
+        phone.anomalyId = JS(phone.ev, "id");
+        phone.ringing = true; phone.ignoreT = 0; phone.ringT = 0;
+        phone.transcript.clear(); phone.exchanges = 0;
+        Notify("The desk phone is ringing.");
+    }
+    UpdatePhone(dt);
+
+    // mundane work calls - payroll, IT, security check-ins. No anomaly weight,
+    // just a phone that rings; ignoring them only costs a little calm.
+    workCallT -= dt;
+    if (workCallT <= 0 && !phone.ringing && !phone.answered && ad.pendingCall.is_null() &&
+        A.dialogs.contains("work_calls")) {
+        auto& wc = A.dialogs["work_calls"];
+        auto iv = Cfg()["instability"]["work_call_interval_sec"];
+        workCallT = RandRange(iv[0].get<float>(), iv[1].get<float>());
+        // each caller phones once a night - payroll never rings twice
+        std::vector<int> fresh;
+        for (int i = 0; i < (int)wc.size(); i++)
+            if (!workCallsUsed.count(i)) fresh.push_back(i);
+        if (!fresh.empty()) {
+            int pick = fresh[RandInt(0, (int)fresh.size() - 1)];
+            workCallsUsed.insert(pick);
+            phone.ev = wc[pick];
+            phone.isWork = true;
+            phone.anomalyId.clear();
+            phone.ringing = true; phone.ignoreT = 0; phone.ringT = 0;
+            phone.transcript.clear(); phone.exchanges = 0;
+            Notify("The desk phone is ringing.");
+        }
+    }
+
+    // ----- breach: something outside finds a way in -----
+    // window: blinds open (or glass already broken) while a figure/banger is
+    //   at the window.
+    // door: the office door standing open with a figure/banger at it.
+    // crouched under the desk it can't find you; anywhere else is a kill.
+    const json nsc = Cfg()["instability"].value("night_scaling", json::object());
+    float breachUnlock = JF(nsc, "unlock_breach_night", 3.f);
+    bool windowThreat = night >= breachUnlock && (office.blindsOpen || office.windowBroken) &&
+        (vs.exteriorFigure == "figure_at_window" || (vs.bangerActive && vs.bangerAt == "window"));
+    bool doorThreat = night >= breachUnlock && (doorOpen || doorAnim > 0.45f) &&
+        (vs.exteriorFigure == "figure_at_door" || (vs.bangerActive && vs.bangerAt == "door"));
+    // a broken line of defence means almost no grace: shattered glass or an
+    // open door lets it come straight through instead of stalking the gap
+    float need = JF(Cfg()["instability"], "breach_sec", 8.f);
+    if (windowThreat && office.windowBroken) need *= 0.35f;
+    if (doorThreat) need *= 0.30f;
+    if (breachCooldown > 0) breachCooldown -= dt;
+    if (breachRush >= 0) {
+        // the rush crosses the room in well under a second - hide now or die
+        breachRush += dt * 1.6f;
+        shake = std::max(shake, 0.4f);
+        if (breachRush >= 1.f) {
+            breachRush = -1;
+            if (player.hiding) {
+                breachSearchT = JF(Cfg()["instability"], "breach_search_sec", 6.f);
+                audio.Play(AudioBank::Sfx::Heart, 0.9f);
+            } else {
+                deathTitle = breachDoor ? "IT CAME THROUGH THE DOOR"
+                                        : "IT CAME THROUGH THE GLASS";
+                Jumpscare(breachDoor ? "breach_door" : "breach");
+            }
+        }
+    } else if (breachSearchT > 0) {
+        breachSearchT -= dt;
+        if (!player.hiding) {           // stood up / left cover mid-search
+            breachSearchT = 0;
+            deathTitle = "IT FOUND YOU";
+            Jumpscare("breach");
+        } else if (breachSearchT <= 0) {
+            breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+            deeds["breach_survived"]++;
+            Notify("It searched the room and left. The window is broken - call Facilities.");
+            audio.Play(AudioBank::Sfx::Creak, 0.6f);
+        }
+    } else if ((windowThreat || doorThreat) && breachCooldown <= 0) {
+        breachT += dt;
+        if (!breachWarned && breachT > std::min(2.5f, need * 0.45f)) {
+            breachWarned = true;
+            Notify(doorThreat ? "It has noticed the open door."
+                              : "Something outside is watching the open blinds.");
+            audio.Play(AudioBank::Sfx::Thump, 0.4f);
+        }
+        if (breachT > need) {
+            breachT = 0; breachWarned = false;
+            breachRush = 0;
+            breachDoor = doorThreat;
+            bool fromBanger = vs.bangerActive &&
+                (vs.bangerAt == "window" || vs.bangerAt == "door");
+            breachFrom = fromBanger ? vs.bangerPos : vs.figurePos;
+            // it left its spot - remove the anomaly so the outside figure is
+            // gone too (and doesn't linger there after a successful dodge).
+            // The door figure also drives the banger state, so drop both
+            // kinds - whichever is active is the thing that just came in.
+            if (doorThreat) { ad.DropKind("banging_door"); ad.DropKind("figure_at_door"); }
+            else            { ad.DropKind("banging_window"); ad.DropKind("figure_at_window"); }
+            if (!doorThreat)
+                // ...and it left the glass in pieces: stays live until
+                // Facilities is called out to repair it
+                ad.DebugForceKind("broken_window", office);
+            audio.Play(AudioBank::Sfx::Stinger, 0.7f);
+        }
+    } else {
+        breachT = std::max(0.f, breachT - dt * 2.f);
+        breachWarned = false;
+    }
+
+    // LLM remix spawn: director asked for one, submit the catalog prompt
+    if (ad.remixPending && remixReq == -1) {
+        LLMClient::Request r;
+        r.purpose = "remix";
+        r.systemPrompt = ad.RemixPrompt();
+        r.user = "Design one anomaly now. JSON only.";
+        remixReq = llm.Submit(r);
+    }
+
+    if (ad.IntruderActive() && !intruderSeen) {
+        intruderSeen = true;
+        audio.Play(AudioBank::Sfx::Thump, 0.35f); // faint cue only
+    }
+    if (!ad.IntruderActive()) intruderSeen = false;
+
+    // hostile visitor reveal on long interviews even without player input
+    if (vs.VisitorSeated() && vs.Cur().anomaly == "hostile" && vs.Cur().seatT > vs.hostileRevealSec)
+        vs.MarkHostileRevealed();
+    if (vs.Cur().hostileStarted && !vs.Cur().hostileWarned) {
+        vs.CurMut().hostileWarned = true;
+        Notify("Something about them has changed. PHONE > Security - now.");
+        audio.Play(AudioBank::Sfx::Heart, 0.85f);
+        shake = std::max(shake, 0.35f);
+    }
+
+    float ins = ad.Instability();
+    // dread drone scales with instability; hum stays constant
+    audio.SetDroneLevel(0.15f + ins / 100.f * 0.85f);
+    // heartbeat joins in past 72% - pace + volume tighten toward the ceiling
+    if (ins > 72.f) {
+        heartT -= dt;
+        if (heartT <= 0.f) {
+            float k = (ins - 72.f) / 28.f;
+            audio.Play(AudioBank::Sfx::Heart, 0.30f + 0.45f * k);
+            heartT = 2.1f - 1.3f * k;
+        }
+    } else heartT = 0;
+
+    // light flicker: ambient instability only shimmers - it must never kill
+    // visibility or impersonate a reportable anomaly. Sustained darkness is
+    // reserved for the lights_office ANOMALY / manual switch, and even then
+    // the room stays dim-but-navigable (desk lamp + monitor carry it).
+    bool lightsOut = ad.HasKind("lights_office") || manualLightsOff;
+    float fl = 1.f;
+    if (ins > 45.f)
+        fl -= (ins - 45.f) / 55.f * 0.09f * (0.5f + 0.5f * std::sin((float)GetTime() * 11.f));
+    if (lightsOut) {
+        float t = (float)GetTime();
+        fl = 0.30f + 0.12f * (0.5f + 0.5f * std::sin(t * 17.f) * std::sin(t * 6.3f));
+        if (Rand01() < dt * 0.3f) audio.Play(AudioBank::Sfx::Buzz, 0.35f);
+    } else if (ins > 60.f && blackoutT <= 0.f &&
+               Rand01() < dt * 0.03f * ((ins - 60.f) / 40.f)) {
+        blackoutT = RandRange(0.04f, 0.09f);              // brief brownout, not darkness
+        audio.Play(AudioBank::Sfx::Buzz, 0.45f);
+    }
+    if (blackoutT > 0.f) blackoutT -= dt;
+    fx.flicker = fl * (blackoutT > 0.f ? 0.55f : 1.f);
+    fx.blackout = lightsOut ? 0.12f : (blackoutT > 0.f ? 0.5f : 0.f);
+    office.lampDim = fx.flicker;
+    fx.waitingDark = office.waitingLightsOut;
+
+    if (std::getenv("EI_DIAG")) {   // per-second lighting state dump
+        static float acc = 0; acc += dt;
+        if (acc >= 1.f) {
+            acc = 0;
+            TraceLog(LOG_WARNING, "[diag] t=%.0f fl=%.2f flick=%.2f ins=%.1f lightsOut=%d man=%d bo=%.2f waitDark=%d anom=%d amb=%d vis=%d door=%d",
+                     (float)GetTime(), fl, fx.flicker, ins, (int)lightsOut, (int)manualLightsOff,
+                     blackoutT, (int)office.waitingLightsOut, ad.ActiveCount(), (int)vs.ambient.size(),
+                     (int)vs.HasActiveVisitor(), (int)doorOpen);
+        }
+    }
+
+    shake = std::max(0.f, shake - dt * 1.6f);
+
+    if (ad.Instability() >= 100.f) Die("TERMINATED", JS(A.dialogs["endings"], "consumed"));
+
+    for (auto& n : notes) n.second -= dt;
+    std::erase_if(notes, [](auto& n) { return n.second <= 0; });
+    if (loreCardT > 0.f) loreCardT -= dt;
+
+    PollLLM();
+}
+
+// ---------- draw ----------
+
+// Projects the monitor face to screen space and draws the live OS texture.
+// Called in the 2D pass after the scene blit (unlit - reads as emissive).
+// OS screen as real world geometry: drawn inside the 3D pass after LitOff so
+// it renders unlit (a monitor glows). Depth-tested and clipped like any other
+// surface - it can never warp, smear, or swing with the camera.
+void Game::DrawMonitorPoly() {
+    Vector3 c; float w, h, z;
+    if (!osTexOk || !office.MonitorQuad(c, w, h, z)) return;
+    rlBegin(RL_QUADS);
+        rlSetTexture(osTex.texture.id);
+        rlColor4ub(255, 255, 255, 255);
+        rlNormal3f(0, 0, 1);   // faces +z toward the chair
+        rlTexCoord2f(0, 1); rlVertex3f(c.x - w, c.y + h, z);  // TL (FBO v-flip)
+        rlTexCoord2f(0, 0); rlVertex3f(c.x - w, c.y - h, z);  // BL
+        rlTexCoord2f(1, 0); rlVertex3f(c.x + w, c.y - h, z);  // BR
+        rlTexCoord2f(1, 1); rlVertex3f(c.x + w, c.y + h, z);  // TR
+    rlEnd();
+    rlSetTexture(0);  // no-op on GL3.3, but documents intent
+}
+
+void Game::DrawWorld() {
+    office.clockHour = gameHour;
+    if (shake > 0.f) {
+        Vector3 so{(Rand01() - 0.5f) * shake * 0.10f,
+                   (Rand01() - 0.5f) * shake * 0.10f,
+                   (Rand01() - 0.5f) * shake * 0.05f};
+        cam.position = Vector3Add(cam.position, so);
+        cam.target = Vector3Add(cam.target, so);
+    }
+    if (fx.ok) {
+        fx.EnsureSize();
+        BeginTextureMode(fx.scene);
+        ClearBackground(fx.fogColor);
+        fx.SetViewPos(cam.position);
+        fx.PushLights();
+        BeginMode3D(cam);
+        fx.BeginWorld();              // lighting shader on
+        if (!std::getenv("EI_NOITEMS")) office.Draw();
+        if (!std::getenv("EI_NOVIS")) vs.Draw();
+        DrawCrew();
+        fx.LitOff();                  // figures stay unlit silhouettes
+        if (ad.IntruderActive()) {
+            Vector3 ip = ad.IntruderPos();
+            Vector3 e = player.Eye();
+            float yaw = std::atan2(e.x - ip.x, e.z - ip.z) * RAD2DEG;
+            Office::DrawShadowFigure(ip, yaw, 1.08f);
+        }
+        if (breachRush >= 0.f) {          // the window figure crossing the room
+            Vector3 e = player.Eye();
+            Vector3 p{breachFrom.x + (e.x - breachFrom.x) * breachRush, 0.f,
+                      breachFrom.z + (e.z - breachFrom.z) * breachRush};
+            float yaw = std::atan2(e.x - p.x, e.z - p.z) * RAD2DEG;
+            Office::DrawShadowFigure(p, yaw, 1.18f);
+        } else if (breachSearchT > 0) {   // it looms beside the desk, hunting
+            Vector3 d = office.Find("desk") ? office.Find("desk")->pos : Vector3{0.f, 0.f, 1.6f};
+            Vector3 p{d.x - 0.9f, 0.f, d.z - 0.35f};
+            float yaw = std::atan2(d.x - p.x, d.z - p.z) * RAD2DEG;
+            Office::DrawShadowFigure(p, yaw, 1.18f);
+        }
+        DrawMonitorPoly();            // OS screen: real world-space quad, unlit
+        office.DrawEyes();            // anomaly eyes: unlit pale domes, never blacked out
+        office.DrawGlass();           // translucent - must be last in 3D pass
+        if (std::getenv("EI_DIAG")) {  // leftover transform here corrupts whole batch
+            static double bdNext = 0;
+            if (GetTime() >= bdNext) {
+                bdNext = GetTime() + 1.0;
+                Matrix t = rlGetMatrixTransform();
+                bool ident = std::fabs(t.m0 - 1) < 1e-4f && std::fabs(t.m5 - 1) < 1e-4f &&
+                             std::fabs(t.m10 - 1) < 1e-4f && std::fabs(t.m15 - 1) < 1e-4f &&
+                             std::fabs(t.m12) < 1e-4f && std::fabs(t.m13) < 1e-4f && std::fabs(t.m14) < 1e-4f;
+                TraceLog(LOG_WARNING, "[batch] transform ident=%d m0=%.3f m5=%.3f m12=%.3f m13=%.3f m14=%.3f",
+                         ident, t.m0, t.m5, t.m12, t.m13, t.m14);
+            }
+        }
+        EndMode3D();
+        EndTextureMode();
+        if (std::getenv("EI_DUMPRT")) {   // diag: dump raw scene RT at fixed times
+            static float dumpT[4] = {8.f, 22.f, -1.f, -1.f};
+            static int dumped = 0;
+            if (dumped < 2) {
+                float t = (float)GetTime();
+                for (int i = 0; i < 2; i++) if (dumpT[i] > 0.f && t >= dumpT[i]) {
+                    dumpT[i] = -1.f; dumped++;
+                    Image img = LoadImageFromTexture(fx.scene.texture);
+                    ImageFlipVertical(&img);
+                    char fn[32]; snprintf(fn, 32, "ei_rt_%d.png", (int)t);
+                    ExportImage(img, fn);
+                    UnloadImage(img);
+                }
+            }
+        }
+        return;
+    }
+    // fallback: unlit direct render if shaders failed
+    BeginMode3D(cam);
+    office.Draw();
+    office.DrawEyes();
+    vs.Draw();
+    DrawCrew();
+    if (ad.IntruderActive()) {
+        Vector3 ip = ad.IntruderPos();
+        Vector3 e = player.Eye();
+        float yaw = std::atan2(e.x - ip.x, e.z - ip.z) * RAD2DEG;
+        Office::DrawShadowFigure(ip, yaw, 1.08f);
+    }
+    office.DrawGlass();
+    EndMode3D();
+    if (debug && osTexOk) // F3: OS texture thumbnail to verify FBO content/orientation
+        DrawTexturePro(osTex.texture,
+                       Rectangle{0, 0, (float)osTex.texture.width, -(float)osTex.texture.height},
+                       Rectangle{10, 10, 312, 192}, Vector2{0, 0}, 0, WHITE);
+}
+
+// named for menus/prompts - raylib keycodes for letters/digits/punct already
+// match ASCII, only the special keys need labels. Returns std::string (not a
+// static buffer): several calls appear in one concatenation and a shared
+// static char[] would alias to the last key written.
+std::string Game::KeyName(int k) {
+    switch (k) {
+        case 0: return "---";
+        case KEY_LEFT_SHIFT: return "LSHIFT";
+        case KEY_RIGHT_SHIFT: return "RSHIFT";
+        case KEY_LEFT_CONTROL: return "LCTRL";
+        case KEY_RIGHT_CONTROL: return "RCTRL";
+        case KEY_LEFT_ALT: return "LALT";
+        case KEY_RIGHT_ALT: return "RALT";
+        case KEY_TAB: return "TAB";
+        case KEY_SPACE: return "SPACE";
+        case KEY_ENTER: return "ENTER";
+        case KEY_BACKSPACE: return "BKSP";
+        case KEY_ESCAPE: return "ESC";
+        case KEY_UP: return "UP";
+        case KEY_DOWN: return "DOWN";
+        case KEY_LEFT: return "LEFT";
+        case KEY_RIGHT: return "RIGHT";
+        case KEY_CAPS_LOCK: return "CAPS";
+        case KEY_HOME: return "HOME";
+        case KEY_END: return "END";
+        case KEY_PAGE_UP: return "PGUP";
+        case KEY_PAGE_DOWN: return "PGDN";
+        case KEY_INSERT: return "INS";
+        case KEY_DELETE: return "DEL";
+    }
+    if (k >= KEY_F1 && k <= KEY_F12) {
+        char fb[8]; snprintf(fb, 8, "F%d", k - KEY_F1 + 1); return fb;
+    }
+    char b[8];
+    snprintf(b, 8, "%c", (k >= 32 && k < 127) ? k : '?');
+    return b;
+}
+
+std::string Game::BindLabel(const char* action, int key) {
+    return std::string(action) + "  [" + KeyName(key) + "]";
+}
+
+// hover-highlighted menu button; registers its tooltip on hover. click = true.
+bool Game::MenuBtn(Rectangle r, const char* label, const char* tooltip) {
+    bool hov = CheckCollisionPointRec(GetMousePosition(), r);
+    if (hov && tooltip) tip = tooltip;
+    DrawRectangleRounded(r, 0.14f, 6, hov ? Color{85, 100, 125, 255} : Color{55, 62, 75, 255});
+    if (hov) DrawRectangleRoundedLinesEx(r, 0.14f, 6, 1.5f, Color{150, 200, 235, 200});
+    Vector2 ts = MeasureTextEx(A.font, label, 23, 1);
+    DrawTextEx(A.font, label, {r.x + (r.width - ts.x) / 2, r.y + (r.height - 23) / 2 + 1.f}, 23, 1, WHITE);
+    return hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+}
+
+// setting row: label left, drag slider right. mutates v live while held.
+void Game::SliderRow(Rectangle r, const char* label, float& v, float lo, float hi,
+                     const char* tooltip) {
+    Vector2 m = GetMousePosition();
+    Rectangle bar{r.x + r.width - 260.f, r.y + 12.f, 200.f, 20.f};
+    if (CheckCollisionPointRec(m, r) && tooltip) tip = tooltip;
+    if (CheckCollisionPointRec(m, bar) && IsMouseButtonDown(MOUSE_LEFT_BUTTON))
+        v = std::clamp(lo + (m.x - bar.x) / bar.width * (hi - lo), lo, hi);
+    DrawRectangleRounded(r, 0.12f, 6, Color{40, 44, 54, 255});
+    DrawTextEx(A.font, label, {r.x + 14.f, r.y + 11.f}, 20, 1, Color{190, 200, 210, 255});
+    float t = std::clamp((v - lo) / (hi - lo), 0.f, 1.f);
+    DrawRectangleRounded(bar, 0.5f, 6, Color{28, 31, 40, 255});
+    DrawRectangleRounded({bar.x, bar.y, bar.width * t, bar.height}, 0.5f, 6, Color{95, 115, 145, 255});
+    DrawCircleV({bar.x + bar.width * t, bar.y + bar.height / 2}, bar.height * 0.68f, Color{180, 195, 215, 255});
+    char vb[24];
+    if (lo == 0.f && hi == 1.f) snprintf(vb, 24, "%d%%", (int)(v * 100.f + 0.5f));
+    else snprintf(vb, 24, "%.2f", v);
+    DrawTextEx(A.fontSmall, vb, {bar.x + bar.width + 10.f, r.y + 13.f}, 18, 1, Color{150, 160, 170, 255});
+}
+
+// setting row: label + click-to-edit text value (empty = config default)
+void Game::TextRow(Rectangle r, const char* label, std::string& s, int id,
+                   const char* tooltip) {
+    Vector2 m = GetMousePosition();
+    bool hov = CheckCollisionPointRec(m, r);
+    if (hov && tooltip) tip = tooltip;
+    if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) { editId = id; focusApiKey = false; }
+    else if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !hov && editId == id) editId = 0;
+    bool foc = editId == id;
+    DrawRectangleRounded(r, 0.12f, 6, Color{40, 44, 54, 255});
+    DrawRectangleRoundedLinesEx(r, 0.12f, 6, 2,
+        foc ? Color{150, 200, 235, 255} : Color{70, 80, 95, 255});
+    if (foc) {
+        int ch;
+        while ((ch = GetCharPressed()) > 0)
+            if (ch >= 32 && ch < 127 && s.size() < 200) s += (char)ch;
+        if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && !s.empty())
+            s.pop_back();
+        TryPaste(s, 200, true);
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE)) { editId = 0; ApplyProvider(); }
+    }
+    std::string disp = s.empty() ? std::string("(config default)") : s;
+    std::string row = std::string(label) + "  " + disp + (foc ? "_" : "");
+    // shrink the tail end if the value is longer than the row
+    while (MeasureTextEx(A.font, row.c_str(), 17, 1).x > r.width - 16 && disp.size() > 12) {
+        disp = ".." + disp.substr(3);
+        row = std::string(label) + "  " + disp + (foc ? "_" : "");
+    }
+    DrawTextEx(A.font, row.c_str(), {r.x + 14.f, r.y + 12.f}, 17, 1,
+               s.empty() ? Color{120, 125, 135, 255} : Color{190, 200, 210, 255});
+}
+
+void Game::DrawTooltipBar(float x, float y, float w) {
+    if (tip.empty()) return;
+    float ly = y;
+    for (auto& l : WrapText(A.fontSmall, tip, 18, 1, w)) {
+        DrawTextEx(A.fontSmall, l.c_str(), {x, ly}, 18, 1, Color{150, 160, 175, 255});
+        ly += 20.f;
+    }
+}
+
+void Game::DrawTitle() {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    tip.clear();
+    // translucent - the drifting office renders behind this
+    DrawRectangleGradientV(0, 0, W, H, Color{8, 10, 14, 195}, Color{24, 16, 24, 210});
+    std::string t = JS(Cfg()["game"], "title", "EXIT INTERVIEW");
+    Vector2 ts = MeasureTextEx(A.fontBig, t.c_str(), 77, 2);
+    DrawTextEx(A.fontBig, t.c_str(), {W / 2.f - ts.x / 2, H * 0.22f}, 77, 2, Color{220, 215, 205, 255});
+    std::string sub = JS(Cfg()["game"], "subtitle");
+    ts = MeasureTextEx(A.font, sub.c_str(), 24, 1);
+    DrawTextEx(A.font, sub.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 80}, 24, 1, Color{140, 150, 160, 255});
+    std::string ntxt = night <= 1 ? "NIGHT ONE - ORIENTATION" : ("NIGHT " + std::to_string(night) + "  [R to wipe record]");
+    ts = MeasureTextEx(A.fontSmall, ntxt.c_str(), 20, 1);
+    DrawTextEx(A.fontSmall, ntxt.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 112}, 20, 1, Color{170, 140, 80, 255});
+    if (!lastEval.empty()) {
+        std::string ev = "LAST SHIFT EVALUATION: " + lastEval;
+        ts = MeasureTextEx(A.fontSmall, ev.c_str(), 18, 1);
+        DrawTextEx(A.fontSmall, ev.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 136}, 18, 1, Color{130, 135, 145, 255});
+    }
+
+    if (menuPage == 1) { DrawSettings(); return; }
+
+    // main menu - click or keyboard shortcuts
+    const float bw = 380.f, bh = 52.f, gap = 13.f;
+    Rectangle r{W / 2.f - bw / 2, H * 0.50f, bw, bh};
+    if (MenuBtn(r, "BEGIN THE NIGHT SHIFT", "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
+    r.y += bh + gap;
+    if (saveExists) {
+        if (MenuBtn(r, "CONTINUE FROM SAVE", "Resume the shift exactly where you left it.")) {
+            if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); }
+            return;
+        }
+        r.y += bh + gap;
+    }
+    if (MenuBtn(r, "SETTINGS", "Audio, controls, LLM and general options.")) { menuPage = 1; settingsTab = 0; return; }
+    r.y += bh + gap;
+    if (MenuBtn(r, "QUIT", "Exit to desktop.")) { quit = true; return; }
+
+    std::string warn = (llm.ProviderName() == "groq" && apiKey.empty())
+        ? "no API key set - replies run on the offline stub (SETTINGS > LLM)"
+        : "LLM: " + llm.ProviderName() + (hardcodedOnly ? "   |   anomalies: scripted" : "   |   anomalies: scripted + LLM");
+    ts = MeasureTextEx(A.fontSmall, warn.c_str(), 17, 1);
+    DrawTextEx(A.fontSmall, warn.c_str(), {W / 2.f - ts.x / 2, H - 64.f}, 17, 1,
+               apiKey.empty() && llm.ProviderName() == "groq" ? Color{200, 140, 90, 255} : Color{90, 100, 110, 255});
+    std::string ctrl = std::string(KeyName(keys.fwd)) + "/" + KeyName(keys.left) + "/" +
+        KeyName(keys.back) + "/" + KeyName(keys.right) + " move - " + KeyName(keys.sprint) +
+        " sprint - " + KeyName(keys.crouch) + " crouch - " + KeyName(keys.interact) +
+        " interact - " + KeyName(keys.swap) + " monitor - ESC pause";
+    ts = MeasureTextEx(A.fontSmall, ctrl.c_str(), 17, 1);
+    DrawTextEx(A.fontSmall, ctrl.c_str(), {W / 2.f - ts.x / 2, H - 32.f}, 17, 1, Color{110, 115, 125, 255});
+    if (!tip.empty()) DrawTooltipBar(W / 2.f - 300.f, r.y + bh + 18.f, 600.f);
+}
+
+// API-key text field + PASTE button, shared by title settings and pause menu.
+// Typing masks the key but shows length + last 4 chars so entry is verifiable.
+void Game::ApiKeyField(Rectangle field, Rectangle pasteBtn) {
+    Vector2 m = GetMousePosition();
+    bool hov = CheckCollisionPointRec(m, field);
+    if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) focusApiKey = true;
+    else if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !hov &&
+             !CheckCollisionPointRec(m, pasteBtn)) focusApiKey = false;
+    DrawRectangleRounded(field, 0.12f, 6, Color{40, 44, 54, 255});
+    DrawRectangleRoundedLinesEx(field, 0.12f, 6, 2,
+        focusApiKey ? Color{150, 200, 235, 255} : Color{70, 80, 95, 255});
+    if (focusApiKey) {
+        int ch;
+        while ((ch = GetCharPressed()) > 0)
+            if (ch >= 32 && ch < 127 && apiKey.size() < 512) apiKey += (char)ch;
+        if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && !apiKey.empty())
+            apiKey.pop_back();
+        TryPaste(apiKey, 512, true);
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_ESCAPE)) {
+            focusApiKey = false;
+            ApplyProvider();
+        }
+    }
+    // paste button: fills the field from the clipboard, with visible feedback
+    bool phov = CheckCollisionPointRec(m, pasteBtn);
+    DrawRectangleRounded(pasteBtn, 0.12f, 6, phov ? Color{85, 100, 125, 255} : Color{55, 62, 75, 255});
+    Vector2 pts = MeasureTextEx(A.font, "PASTE", 22, 1);
+    DrawTextEx(A.font, "PASTE", {pasteBtn.x + (pasteBtn.width - pts.x) / 2, pasteBtn.y + 12.f}, 22, 1, WHITE);
+    if (phov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        const char* c = GetClipboardText();
+        apiKey.clear();
+        if (c) for (const char* p = c; *p && apiKey.size() < 512; p++)
+            if (*p >= 33 && *p < 127) apiKey += *p;
+        Notify(apiKey.empty() ? "Clipboard empty or unreadable - type the key instead."
+                              : "API key pasted (" + std::to_string(apiKey.size()) + " chars).");
+        ApplyProvider();
+    }
+    std::string disp;
+    if (apiKey.empty()) disp = "GROQ API KEY";
+    else {
+        disp = std::string(std::min<size_t>(apiKey.size(), 18), '*');
+        if (apiKey.size() > 4) disp += apiKey.substr(apiKey.size() - 4);   // last-4 confirms the right key
+        disp += " (" + std::to_string(apiKey.size()) + ")";
+    }
+    DrawTextEx(A.font, ("KEY: " + disp + (focusApiKey ? "_" : "")).c_str(),
+               {field.x + 12.f, field.y + 12.f}, 18, 1,
+               apiKey.empty() ? Color{130, 135, 145, 255} : Color{190, 200, 210, 255});
+}
+
+void Game::DrawSettings() {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    float pw = std::min(940.f, W - 60.f), ph = std::min(600.f, H - 80.f);
+    Rectangle panel{W / 2.f - pw / 2, H / 2.f - ph / 2, pw, ph};
+    DrawRectangleRounded(panel, 0.03f, 8, Color{14, 16, 20, 238});
+    DrawRectangleRoundedLinesEx(panel, 0.03f, 8, 2, Color{60, 70, 90, 255});
+    DrawTextEx(A.fontBig, "SETTINGS", {panel.x + 28.f, panel.y + 16.f}, 34, 1, Color{210, 205, 195, 255});
+
+    // ---- tabs ----
+    const char* tabs[4] = {"GENERAL", "AUDIO", "CONTROLS", "LLM"};
+    const char* tabTips[4] = {
+        "Camera feel and your shift record. Hover any setting for an explanation.",
+        "Volume mix. Master scales everything else; keep ambience audible to hear instability cues.",
+        "Rebind movement and interaction keys. Click a bind, then press the new key. ESC cancels.",
+        "The model that writes visitor dialogue, phone calls, and judges your supervisor report."
+    };
+    float tw = (pw - 56.f - 3 * 10.f) / 4.f;
+    for (int i = 0; i < 4; i++) {
+        Rectangle tr{panel.x + 28.f + i * (tw + 10.f), panel.y + 62.f, tw, 38.f};
+        bool hov = CheckCollisionPointRec(GetMousePosition(), tr);
+        if (hov) tip = tabTips[i];
+        bool on = settingsTab == i;
+        DrawRectangleRounded(tr, 0.14f, 6,
+            on ? Color{95, 115, 145, 255} : hov ? Color{75, 85, 105, 255} : Color{45, 50, 62, 255});
+        Vector2 ts = MeasureTextEx(A.font, tabs[i], 20, 1);
+        DrawTextEx(A.font, tabs[i], {tr.x + (tr.width - ts.x) / 2, tr.y + 9.f}, 20, 1, WHITE);
+        if (hov && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) { settingsTab = i; rebinding = -1; }
+    }
+
+    // ---- rows ----
+    Rectangle r{panel.x + 28.f, panel.y + 118.f, pw - 56.f, 44.f};
+    auto next = [&] { r.y += 52.f; };
+    auto backBtn = [&] {
+        Rectangle br{panel.x + 28.f, panel.y + ph - 52.f, 180.f, 38.f};
+        if (MenuBtn(br, "< BACK", "Return to the previous screen.")) menuPage = 0;
+    };
+
+    if (settingsTab == 0) {
+        SliderRow(r, "MOUSE SENSITIVITY", sens, 0.02f, 0.40f,
+            "How fast the view turns. 0.12 is the default feel; lower is steadier, higher is twitchier.");
+        next();
+        std::string nl = "SHIFT RECORD: NIGHT " + std::to_string(night) + "  (click to reset)";
+        if (MenuBtn(r, nl.c_str(), "Reset the night counter and your warning record back to night one.")) {
+            night = 1; seenNames.clear(); lastEval.clear(); SaveSettings();
+        }
+        next();
+        if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {
+            sens = JF(Cfg()["game"], "mouse_sensitivity", 0.12f);
+            volMaster = volSfx = volAmb = volMusic = 1.f;
+            keys = KeyMap{};
+            llmEndpoint.clear(); llmModel.clear(); apiKey.clear();
+            hardcodedOnly = true; ad.freeform = false;
+            ApplyAudio(); ApplyProvider();
+        }
+        next();
+        if (MenuBtn(r, "EXPORT PROFILE",
+            "Write settings + save (including LLM provider/API key) into ei_profile.json next to the exe. Copy it into a new build's folder to migrate everything at once. Contains your API key - keep it private.")) {
+            ExportProfile();
+        }
+        next();
+        if (MenuBtn(r, "IMPORT PROFILE",
+            "Load ei_profile.json from next to the exe - restores settings, API key and a saved shift. (A new build does this automatically on first launch if it finds one.)")) {
+            if (ImportProfile())
+                Notify("Profile imported - settings, API key and save restored.");
+            else
+                Notify("No ei_profile.json found next to the exe, or it was empty.");
+        }
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) SaveSettings();
+    }
+    else if (settingsTab == 1) {
+        SliderRow(r, "MASTER VOLUME", volMaster, 0.f, 1.f,
+            "Overall volume for everything the game plays."); next();
+        SliderRow(r, "EFFECTS VOLUME", volSfx, 0.f, 1.f,
+            "Knocks, the phone ring, stingers, UI ticks and footsteps. The danger cues live here."); next();
+        SliderRow(r, "AMBIENCE VOLUME", volAmb, 0.f, 1.f,
+            "The fluorescent hum and the instability drone that swells as anomalies gather."); next();
+        SliderRow(r, "MUSIC VOLUME", volMusic, 0.f, 1.f,
+            "The menu themes - music on the title and ending screens."); next();
+        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) { ApplyAudio(); SaveSettings(); }
+    }
+    else if (settingsTab == 2) {
+        const char* bl[8] = {"MOVE FORWARD", "MOVE BACK", "STRAFE LEFT", "STRAFE RIGHT",
+                             "SPRINT (hold)", "CROUCH / HIDE (hold)", "INTERACT", "MONITOR / VISITOR"};
+        const char* bt[8] = {
+            "Walk forward while roaming.",
+            "Walk backward while roaming.",
+            "Sidestep left - while seated this leans left to peek past the monitor.",
+            "Sidestep right - while seated this leans right to peek.",
+            "Hold to run. Louder footsteps.",
+            "Hold to crouch. At your desk this hides you under it during a breach.",
+            "Use doors, blinds, the phone, chairs - whatever the prompt shows.",
+            "While seated, swap between the computer and facing your visitor."
+        };
+        int* bk[8] = {&keys.fwd, &keys.back, &keys.left, &keys.right,
+                      &keys.sprint, &keys.crouch, &keys.interact, &keys.swap};
+        for (int i = 0; i < 8; i++) {
+            Rectangle kb{r.x + r.width - 170.f, r.y + 6.f, 150.f, 32.f};
+            bool hov = CheckCollisionPointRec(GetMousePosition(), r);
+            if (hov) tip = bt[i];
+            DrawRectangleRounded(r, 0.12f, 6, Color{40, 44, 54, 255});
+            DrawTextEx(A.font, bl[i], {r.x + 14.f, r.y + 11.f}, 20, 1, Color{190, 200, 210, 255});
+            bool on = rebinding == i;
+            DrawRectangleRounded(kb, 0.16f, 6, on ? Color{150, 90, 60, 255} : Color{60, 68, 82, 255});
+            DrawRectangleRoundedLinesEx(kb, 0.16f, 6, 1.5f,
+                on ? Color{255, 170, 90, 255} : Color{90, 100, 120, 255});
+            std::string kn = on ? "PRESS KEY" : KeyName(*bk[i]);
+            Vector2 ts = MeasureTextEx(A.font, kn.c_str(), 18, 1);
+            DrawTextEx(A.font, kn.c_str(), {kb.x + (kb.width - ts.x) / 2, kb.y + 8.f}, 18, 1, WHITE);
+            if (CheckCollisionPointRec(GetMousePosition(), kb) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+                rebinding = i;
+            next();
+        }
+        // capture the next keypress for the armed bind
+        if (rebinding >= 0) {
+            int kc = -1;
+            for (int k = 32; k < 400; k++) if (IsKeyPressed(k)) { kc = k; break; }
+            if (kc == KEY_ESCAPE) rebinding = -1;                       // cancel
+            else if (kc > 0) {
+                int* bk2[8] = {&keys.fwd, &keys.back, &keys.left, &keys.right,
+                               &keys.sprint, &keys.crouch, &keys.interact, &keys.swap};
+                int old = *bk2[rebinding];
+                for (int j = 0; j < 8; j++)
+                    if (j != rebinding && *bk2[j] == kc) *bk2[j] = old;  // swap conflicts
+                *bk2[rebinding] = kc;
+                rebinding = -1;
+                SaveSettings();
+            }
+        }
+    }
+    else {
+        std::string prov = "PROVIDER: " + llm.ProviderName();
+        if (MenuBtn(r, prov.c_str(),
+            "groq = cloud API (needs an API key). local = your own endpoint such as Ollama. stub = offline keyword replies, no network.")) {
+            providerIdx = (providerIdx + 1) % 3;
+            ApplyProvider();
+        }
+        next();
+        ApiKeyField(Rectangle{r.x, r.y, r.width - 120.f, r.height},
+                    Rectangle{r.x + r.width - 110.f, r.y, 110.f, r.height});
+        if (CheckCollisionPointRec(GetMousePosition(), r))
+            tip = "API key for the groq provider. Click and type, or PASTE. Stored locally in settings.json.";
+        next();
+        TextRow(r, "ENDPOINT", llmEndpoint, 2,
+            "Chat-completions URL. Empty uses the config default (api.groq.com or localhost:11434).");
+        next();
+        TextRow(r, "MODEL", llmModel, 3,
+            "Model name sent to the endpoint. Empty uses the config default for the chosen provider.");
+        next();
+        std::string anL = std::string("ANOMALIES: ") + (hardcodedOnly ? "SCRIPTED ONLY" : "SCRIPTED + LLM");
+        if (MenuBtn(r, anL.c_str(),
+            "Scripted uses only the hand-authored anomaly table. +LLM also lets the director remix furniture and ring you with generated callers.")) {
+            hardcodedOnly = !hardcodedOnly;
+            ad.freeform = !hardcodedOnly;
+            SaveSettings();
+        }
+        next();
+        if (MenuBtn(r, "PING PROVIDER", "Send a one-line request to verify the provider, endpoint, model and key actually work.")) {
+            LLMClient::Request q;
+            q.user = "Reply with exactly one word: ONLINE.";
+            q.maxTokens = 24;
+            testReq = llm.Submit(q);
+            testResult = "pinging...";
+        }
+        if (!testResult.empty())
+            DrawTextEx(A.fontSmall, testResult.c_str(), {r.x + r.width - 340.f, r.y + 14.f},
+                       17, 1, Color{160, 170, 180, 255});
+        next();
+    }
+    backBtn();
+    // controls tab carries a second bottom button on the right
+    if (settingsTab == 2) {
+        Rectangle rr{panel.x + pw - 208.f, panel.y + ph - 52.f, 180.f, 38.f};
+        if (MenuBtn(rr, "RESET BINDS", "Restore the default control layout (WASD, SHIFT, Q, E, TAB).")) {
+            keys = KeyMap{}; SaveSettings();
+        }
+        DrawTooltipBar(panel.x + 230.f, panel.y + ph - 44.f, pw - 460.f);
+    } else
+        DrawTooltipBar(panel.x + 230.f, panel.y + ph - 44.f, pw - 260.f);
+}
+
+void Game::DrawPause() {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    tip.clear();
+    DrawRectangle(0, 0, W, H, Color{0, 0, 0, 170});
+    std::string t = pauseReason.empty() ? "PAUSED" : pauseReason;
+    Vector2 ts = MeasureTextEx(A.fontBig, t.c_str(), 54, 1);
+    DrawTextEx(A.fontBig, t.c_str(), {W / 2.f - ts.x / 2, H * 0.16f}, 54, 1, Color{215, 210, 200, 255});
+    if (menuPage == 1) { DrawSettings(); return; }
+    if (!pauseReason.empty()) {
+        float ry = H * 0.26f;
+        for (auto& l : WrapText(A.font, pauseReason, 24, 1, W * 0.7f)) {
+            DrawTextEx(A.font, l.c_str(), {W / 2.f - MeasureTextEx(A.font, l.c_str(), 24, 1).x / 2, ry}, 24, 1, Color{235, 190, 110, 255});
+            ry += 28;
+        }
+    }
+    const float bw = 380.f, bh = 52.f, gap = 13.f;
+    Rectangle r{W / 2.f - bw / 2, H * 0.36f, bw, bh};
+    bool seated = pauseReturn == Mode::SitVisitor || pauseReturn == Mode::SitComputer ||
+                  pauseReturn == Mode::Unseating;
+    if (MenuBtn(r, "RESUME", "Back to the shift.")) {
+        menuPage = 0;
+        mode = pauseReturn;
+        if (pauseReturn == Mode::Roam) DisableCursor();
+        return;
+    }
+    r.y += bh + gap;
+    if (seated) {   // paused mid-unseat or via handset - offer the way out of the chair
+        if (MenuBtn(r, "STAND UP", "Leave the desk and get back on your feet.")) {
+            menuPage = 0;
+            if (pauseReturn != Mode::Unseating) StandUp();   // already blending? let it finish
+            else mode = Mode::Unseating;
+            return;
+        }
+        r.y += bh + gap;
+    }
+    if (MenuBtn(r, "SETTINGS", "Audio, controls, LLM and general options.")) { menuPage = 1; settingsTab = 0; return; }
+    r.y += bh + gap;
+    if (MenuBtn(r, "SAVE & TITLE", "Save the shift and return to the main menu.")) {
+        menuPage = 0; Save(); saveExists = true; mode = Mode::Title; return;
+    }
+    r.y += bh + gap;
+    if (MenuBtn(r, "RESTART SHIFT", "Abandon this shift and start a fresh one.")) { menuPage = 0; NewShift(false); return; }
+    r.y += bh + gap;
+    if (MenuBtn(r, "QUIT GAME", "Exit to desktop without saving.")) { quit = true; return; }
+    if (!tip.empty()) DrawTooltipBar(W / 2.f - 300.f, r.y + bh + 18.f, 600.f);
+}
+
+// shift evaluation: score the night's deeds into a 0-100 grade for the
+// ending screen + the title's LAST EVAL line
+int Game::EvalScore() const {
+    auto d = [&](const char* k) { auto it = deeds.find(k); return it == deeds.end() ? 0 : it->second; };
+    int score = 40
+        + d("anomaly_resolved") * 8
+        + d("interview_done") * 6
+        + std::min(paperIdx, 8) * 2
+        + d("call_calmed") * 3
+        + d("call_handled") * 2
+        + d("lore_found") * 2
+        + d("clean_shift") * 12
+        + d("intruder_survived") * 6
+        + d("breach_survived") * 4
+        - d("report_rejected") * 4
+        - d("call_ignored") * 4
+        - d("visitor_missed") * 6
+        - d("anomaly_released") * 8
+        - ad.ActiveCount() * 8;
+    return std::clamp(score, 0, 100);
+}
+
+const char* Game::EvalGrade(int score) {
+    return score >= 90 ? "S" : score >= 75 ? "A" : score >= 60 ? "B" : score >= 45 ? "C" : "D";
+}
+
+// true when the player can see (or is parked watching) a world point - used to
+// veto positional anomaly mutations that would visibly glide furniture
+bool Game::PlayerSees(Vector3 p) const {
+    // parked at the desk counts as watching the whole office
+    if (mode == Mode::SitVisitor || mode == Mode::SitComputer) return true;
+    Vector3 eye, f;
+    if (flycam) {
+        // the debug lens is what counts while flying - point it at something
+        // and anomalies treat it as watched
+        eye = cam.position;
+        Vector3 d0{cam.target.x - cam.position.x, cam.target.y - cam.position.y,
+                   cam.target.z - cam.position.z};
+        float l = std::sqrt(d0.x * d0.x + d0.y * d0.y + d0.z * d0.z);
+        f = l > 0.001f ? Vector3{d0.x / l, d0.y / l, d0.z / l} : Vector3{0, 0, 1};
+    } else {
+        eye = player.Eye();
+        f = player.Forward();
+    }
+    Vector3 d{p.x - eye.x, p.y - eye.y, p.z - eye.z};
+    float dist = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+    if (dist < 0.01f) return true;
+    if (dist > 26.f) return false;
+    float dot = (d.x * f.x + d.y * f.y + d.z * f.z) / dist;
+    return dot > 0.40f;   // ~66 deg half-angle: covers fov + peripheral slack
+}
+
+// every booked visit actually finished AND the whole forms queue filed
+bool Game::AllDutiesDone() const {
+    for (auto& e : vs.Schedule())
+        if (!e.value("visited", false)) return false;
+    return !paperForms.is_array() || paperIdx >= (int)paperForms.size();
+}
+
+// every name on the book was dealt with (interviewed, escorted out, or
+// left) and nobody is still mid-visit - paperwork is NOT required: filing
+// is score padding, the book is the job. The eval still prices any misses.
+bool Game::AllVisitorsDone() const {
+    auto& sched = vs.Schedule();
+    if (sched.empty()) return false;
+    for (auto& e : sched)
+        if (!e.value("visited", false)) return false;
+    return !vs.HasActiveVisitor() || vs.Cur().state == VState::Gone;
+}
+
+// the shared "you survived" path - dawn or early clock-out both land here
+void Game::WinShift(bool early) {
+    mode = Mode::Win;
+    EnableCursor();
+    ending = JS(A.dialogs["endings"], early ? "survived_early" : "survived");
+    if (ending.empty()) ending = JS(A.dialogs["endings"], "survived");
+    if (early) deeds["early_done"]++;
+    evalScore = EvalScore();
+    lastEval = std::string(EvalGrade(evalScore)) + " (" + std::to_string(evalScore) + ")";
+    night++;                          // surviving earns the harder shift
+    SaveSettings();
+    audio.Play(AudioBank::Sfx::Whoosh, 0.55f);   // dawn breaks
+}
+
+void Game::DrawEnding() {
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    Color bg = (mode == Mode::Win) ? Color{14, 20, 16, 255} : Color{18, 8, 10, 255};
+    DrawRectangle(0, 0, W, H, bg);
+    std::string t = (mode == Mode::Win) ? "SHIFT COMPLETE" : deathTitle;
+    Color tc = (mode == Mode::Win) ? Color{180, 220, 190, 255} : Color{220, 90, 80, 255};
+    DrawTextEx(A.fontBig, t.c_str(), {W / 2.f - MeasureTextEx(A.fontBig, t.c_str(), 65, 2).x / 2, H * 0.22f}, 65, 2, tc);
+    float y = H * 0.36f;
+    for (auto& l : WrapText(A.font, ending, 24, 1, W * 0.6f)) {
+        DrawTextEx(A.font, l.c_str(), {W / 2.f - MeasureTextEx(A.font, l.c_str(), 24, 1).x / 2, y}, 24, 1, Color{200, 200, 195, 255});
+        y += 30;
+    }
+    // shift record: what the player actually did tonight
+    auto d = [&](const char* k) { auto it = deeds.find(k); return it == deeds.end() ? 0 : it->second; };
+    int score = (mode == Mode::Win && evalScore >= 0) ? evalScore : EvalScore();
+    const char* grade = (mode == Mode::Win) ? EvalGrade(score) : "F";
+    Color dc = (mode == Mode::Win) ? Color{160, 175, 165, 235} : Color{170, 130, 125, 215};
+    char buf[96];
+    std::vector<std::string> rows;
+    snprintf(buf, 96, "INTERVIEWS COMPLETED      %d", d("interview_done")); rows.push_back(buf);
+    snprintf(buf, 96, "ANOMALIES RESOLVED        %d  (%d seen, %d still active)",
+             d("anomaly_resolved"), d("anomaly_seen"), ad.ActiveCount()); rows.push_back(buf);
+    snprintf(buf, 96, "FORMS FILED               %d", paperIdx); rows.push_back(buf);
+    snprintf(buf, 96, "REPORTS REJECTED          %d", d("report_rejected")); rows.push_back(buf);
+    snprintf(buf, 96, "VISITORS LEFT UNINTERVIEWED %d", d("visitor_missed")); rows.push_back(buf);
+    if (d("anomaly_released") > 0) {
+        snprintf(buf, 96, "ANOMALIES WAVED THROUGH   %d", d("anomaly_released")); rows.push_back(buf);
+    }
+    snprintf(buf, 96, "CALLS ANSWERED / IGNORED  %d / %d", d("call_answered"), d("call_ignored")); rows.push_back(buf);
+    int surv = d("intruder_survived") + d("breach_survived");
+    if (surv > 0) { snprintf(buf, 96, "CLOSE CALLS SURVIVED      %d", surv); rows.push_back(buf); }
+    if (d("clean_shift") > 0) rows.push_back("CLEAN SHIFT BONUS       +12");
+    y += 14;
+    float rx = W / 2.f - 250.f;
+    DrawRectangleRounded({rx - 24.f, y - 8.f, 548.f, (float)rows.size() * 26.f + 66.f},
+                         0.08f, 6, Color{10, 12, 14, 160});
+    for (auto& r : rows) { DrawTextEx(A.fontSmall, r.c_str(), {rx, y}, 20, 1, dc); y += 26; }
+    std::string g = "SHIFT EVALUATION: " + std::string(grade) +
+                    (mode == Mode::Win ? "  " + std::to_string(score) + "/100" : "");
+    DrawTextEx(A.font, g.c_str(), {rx, y + 8.f}, 24, 1,
+               (mode == Mode::Win) ? Color{200, 190, 120, 255} : Color{190, 110, 100, 255});
+    DrawTextEx(A.font, "[ ENTER ]  Back to title", {W / 2.f - MeasureTextEx(A.font, "[ ENTER ]  Back to title", 24, 1).x / 2, H * 0.85f}, 24, 1, Color{140, 145, 155, 255});
+}
+
+void Game::DrawDebugOverlay() const {
+    char b[192];
+    std::vector<std::string> rows;
+    snprintf(b, 192, "MODE %d  hour %.2f  night %d  instab %.1f",
+             (int)mode, gameHour, night, ad.Instability());
+    rows.push_back(b);
+    snprintf(b, 192, "player (%.2f, %.2f, %.2f) yaw %.0f pitch %.0f hide %d",
+             player.pos.x, player.pos.y, player.pos.z, player.yaw, player.pitch,
+             (int)player.hiding);
+    rows.push_back(b);
+    snprintf(b, 192, "cam (%.2f, %.2f, %.2f)%s",
+             cam.position.x, cam.position.y, cam.position.z, flycam ? "   FLYCAM" : "");
+    rows.push_back(b);
+    snprintf(b, 192, "door open %d anim %.2f | blinds %d | visitor %d slot %d | ambient %d | crew %d",
+             (int)doorOpen, doorAnim, (int)office.blindsOpen, (int)vs.Cur().state,
+             vs.ActiveSlot(), (int)vs.ambient.size(), (int)crew.size());
+    rows.push_back(b);
+    std::string an;
+    for (auto& a : ad.Active()) an += a.id + " ";
+    rows.push_back("anomalies: " + (an.empty() ? std::string("(none)") : an));
+    if (flycam)
+        rows.push_back("FLYCAM - WASD fly | SPACE/CTRL up/down | SHIFT fast | F6 drop player | F4 exit");
+    float wmax = 0;
+    for (auto& s : rows) wmax = std::max(wmax, MeasureTextEx(A.fontSmall, s.c_str(), 16, 1).x);
+    float y = 58.f;
+    DrawRectangleRounded({8.f, y - 7.f, wmax + 20.f, (float)rows.size() * 20.f + 14.f},
+                         0.10f, 4, Color{8, 10, 12, 200});
+    for (auto& s : rows) {
+        DrawTextEx(A.fontSmall, s.c_str(), {18.f, y}, 16, 1, Color{150, 230, 170, 235});
+        y += 20.f;
+    }
+}
+
+void Game::Jumpscare(const std::string& reason) {
+    if (mode == Mode::Jumpscare || mode == Mode::Dead) return;
+    mode = Mode::Jumpscare;
+    scareT = 0;
+    // callers may pre-set a specific title (breach deaths) - only default here
+    if (deathTitle.empty())
+        deathTitle = (reason == "intruder") ? "IT WAS BEHIND YOU" : "THE INTERVIEW IS OVER";
+    std::string body = JS(A.dialogs["endings"], reason.c_str());
+    ending = body.empty() ? JS(A.dialogs["endings"], "jumpscare") : body;
+    audio.Play(AudioBank::Sfx::Stinger, 1.f);
+}
+
+void Game::Die(const std::string& title, const std::string& body) {
+    if (mode == Mode::Dead) return;
+    mode = Mode::Dead;
+    deathTitle = title;
+    ending = body;
+    EnableCursor();
+    audio.Play(AudioBank::Sfx::Stinger, 0.7f);
+}
+
+void Game::Save() {
+    json j;
+    j["gameHour"] = gameHour;
+    j["night"] = night;
+    j["player"] = {{"x", player.pos.x}, {"z", player.pos.z}, {"yaw", player.yaw}};
+    j["blinds"] = office.blindsOpen;
+    j["director"] = ad.Serialize();
+    j["visitors"] = vs.Serialize();
+    SaveJsonFile(JS(Cfg(), "save_file", "save.json"), j);
+    saveExists = true;
+}
+
+bool Game::Load() {
+    json j = LoadJsonFile(JS(Cfg(), "save_file", "save.json"));
+    if (j.empty()) return false;
+    gameHour = j.value("gameHour", 18.f);
+    office.Load(A.office, Cfg());
+    office.blindsOpen = j.value("blinds", false);
+    player.pos = {j["player"].value("x", 0.f), 0.f, j["player"].value("z", 3.6f)};
+    player.yaw = j["player"].value("yaw", 180.f);
+    player.pitch = 0;
+    doorOpen = false; doorAnim = 0; intruderSeen = false; shake = 0; blackoutT = 0; manualLightsOff = false;
+    heartT = 0; evalScore = -1;
+    deeds.clear(); paperIdx = 0;   // stats are per-shift; a loaded save starts a fresh record
+    vs.Reset(false);               // keep the book as saved - no lore re-roll mid-shift
+    ad.Reset();
+    ad.Deserialize(j["director"], office, vs);
+    ad.night = night;                    // night lives in settings, not the shift save
+    vs.night = night;
+    vs.Deserialize(j["visitors"], office);
+    return true;
+}
+
+// prefix codes the monitor app parses back out for styling:
+//   ~d~ done (struck through)   ~a~ ongoing   ~r~ repeat booking (amber)
+std::vector<std::string> Game::AppointmentsLines() {
+    std::vector<std::string> out;
+    out.push_back("TONIGHT'S EXIT INTERVIEWS");
+    out.push_back("");
+    auto& sched = vs.Schedule();
+    int active = vs.ActiveSlot();
+    for (int i = 0; i < (int)sched.size(); i++) {
+        auto& e = sched[i];
+        std::string an = JS(e, "anomaly", "");
+        if (an == "unscheduled") continue;   // genuinely not on the book
+        const json* p = vs.RosterFind(JS(e, "visitor"));
+        if (!p) continue;
+        float t = JF(e, "time", 0);
+        int h = (int)t % 24, m = (int)((t - (int)t) * 60);
+        char tb[16]; snprintf(tb, 16, "%02d:%02d", h, m);
+        std::string line = std::string(tb) + "   " + JS(*p, "name") + "  -  " + JS(*p, "dept");
+        // a name booked twice tonight is someone coming BACK - the duplicate
+        // stays in the schedule as a "repeat" anomaly (it still arrives and
+        // still answers to Security), but the book shows only the first
+        // listing. No red flag, no second row - the trick is on the player.
+        bool dup = an == "repeat";
+        if (!dup) {
+            for (int k = 0; k < i; k++)
+                if (JS(sched[k], "visitor") == JS(e, "visitor")) { dup = true; break; }
+        }
+        if (dup) continue;   // hidden even once handled - the record stays clean
+        if (e.value("visited", false)) out.push_back("~d~" + line);
+        else if (i == active)              out.push_back("~a~" + line + "    ON-GOING");
+        else                               out.push_back(line);
+    }
+    out.push_back("");
+    out.push_back("Policy: if a visitor is NOT on this list, call SECURITY.");
+    return out;
+}
+
+std::vector<std::string> Game::RecordLines() {
+    std::vector<std::string> out;
+    if (!vs.HasActiveVisitor()) {
+        out.push_back("No visitor currently in office.");
+        return out;
+    }
+    const json* p = vs.Cur().person;
+    out.push_back("PERSONNEL RECORD");
+    out.push_back("");
+    out.push_back("NAME:      " + JS(*p, "name"));
+    out.push_back("DEPT:      " + JS(*p, "dept"));
+    out.push_back("ROLE:      " + JS(*p, "role"));
+    out.push_back("EMPLOYED:  " + JS(*p, "employed"));
+    out.push_back("REASON:    " + JS(*p, "reason"));
+    std::string rs = JS(*p, "reason");
+    if (rs.find("Deceased") != std::string::npos)
+        out.push_back("*** FILE FLAGGED: DECEASED. IF THIS PERSON IS IN YOUR OFFICE, CALL SECURITY. ***");
+    out.push_back("");
+    out.push_back("INTERVIEW CHECKLIST:");
+    out.push_back("- Name + dept match the APPOINTMENTS book");
+    out.push_back("- Ask why they're leaving - compare with REASON above");
+    out.push_back("- Answers that contradict this file -> PHONE > Security");
+    out.push_back("- Not on tonight's list            -> PHONE > Security");
+    out.push_back("- Acts strangely, threatens you    -> PHONE > Security");
+    out.push_back("- Everything checks out            -> END INTERVIEW");
+    return out;
+}
+
+// ---------- main loop ----------
+
+void Game::Run() {
+    while (!quit && !WindowShouldClose()) {
+        float dt = GetFrameTime();
+        dt = std::min(dt, 0.1f);
+        int W = GetScreenWidth(), H = GetScreenHeight();
+
+        if (IsKeyPressed(KEY_F3)) debug = !debug;
+        if (debug && IsKeyPressed(KEY_F4)) {
+            flycam = !flycam;
+            if (flycam) flyPos = cam.position;
+        }
+
+        // menu music: title + ending screens carry a streamed theme loop,
+        // alternating between the two authored tracks; the second a shift
+        // starts it stops - the building's own drone takes over. Failed
+        // loads are remembered per-path in AudioBank so bad files cost
+        // one attempt each, then silence.
+        {
+            static const char* kThemes[] = {
+                "assets/Music/Menu_Another-Night.mp3",
+                "assets/Music/Menu_The-Shift.mp3"};
+            static int themeIdx = 0;
+            bool menuCtx = (mode == Mode::Title || mode == Mode::Dead || mode == Mode::Win);
+            if (menuCtx && !audio.MenuPlaying()) {
+                audio.StartMenuMusic(kThemes[themeIdx]);
+                themeIdx = (themeIdx + 1) % 2;
+            }
+            else if (!menuCtx && audio.MenuPlaying()) audio.StopMenuMusic();
+            audio.UpdateMenuMusic();
+        }
+
+        switch (mode) {
+            case Mode::Title: {
+                // dev hook: EI_MENU=<tab 0..3> pins the settings page open (shots)
+                if (const char* e = std::getenv("EI_MENU")) {
+                    menuPage = 1;
+                    settingsTab = std::clamp(atoi(e), 0, 3);
+                }
+                // slow camera drift through the empty office behind the menu
+                float t = (float)GetTime();
+                cam.position = {std::sin(t * 0.07f) * 3.1f, 1.55f + std::sin(t * 0.05f) * 0.12f,
+                                1.7f + std::cos(t * 0.055f) * 1.1f};
+                cam.up = {0.f, 1.f, 0.f};
+                cam.target = {0.f, 1.15f, -1.2f};
+                cam.fovy = fovBase;
+                audio.SetDroneLevel(0.22f);
+                // the night's cast generates while the menu idles (stub makes
+                // procedural personas offline, so runs stay fresh either way)
+                if (rosterReq == -1 && rosterRaw.empty()) RequestRoster();
+                if (paperReq == -1 && paperRaw.empty()) RequestPaperwork();
+                PollLLM();
+                if (menuPage == 1) {
+                    // settings page: ESC backs out (or cancels an armed bind/field)
+                    if (IsKeyPressed(KEY_ESCAPE)) {
+                        if (rebinding >= 0) rebinding = -1;
+                        else if (focusApiKey || editId) { focusApiKey = false; editId = 0; }
+                        else menuPage = 0;
+                    }
+                } else {
+                    // ENTER applies the API key while its field has focus instead of starting
+                    if (IsKeyPressed(KEY_ENTER) && !focusApiKey && !editId) NewShift(false);
+                    else if (saveExists && IsKeyPressed(KEY_C) && !focusApiKey) { if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); } }
+                    else if (IsKeyPressed(KEY_Q) && !focusApiKey) { quit = true; }
+                    else if (IsKeyPressed(KEY_R) && !focusApiKey && night > 1) { night = 1; SaveSettings(); }
+                }
+                break;
+            }
+            case Mode::Roam:
+                UpdateRoam(dt);
+                UpdateCommon(dt);
+                // dev hook: EI_PAUSE=1 pops the pause menu once (shots)
+                if (std::getenv("EI_PAUSE")) {
+                    static bool once = false;
+                    if (!once) { once = true; pauseReturn = mode; pauseReason.clear(); menuPage = 0; mode = Mode::Pause; EnableCursor(); }
+                }
+                break;
+            case Mode::SitVisitor:
+            case Mode::SitComputer:
+                UpdateSeated(dt);
+                UpdateCommon(dt);
+                if (std::getenv("EI_PAUSE")) {
+                    static bool onceS = false;
+                    if (!onceS) { onceS = true; pauseReturn = mode; pauseReason.clear(); menuPage = 0; mode = Mode::Pause; EnableCursor(); }
+                }
+                break;
+            case Mode::Unseating:
+                UpdateUnseating(dt);
+                UpdateCommon(dt);
+                break;
+            case Mode::Pause:
+                if (IsKeyPressed(KEY_ESCAPE)) {
+                    if (rebinding >= 0) rebinding = -1;                    // unarm, keep the key
+                    else if (focusApiKey || editId) { focusApiKey = false; editId = 0; }
+                    else if (menuPage == 1) menuPage = 0;
+                    else { mode = pauseReturn; if (pauseReturn == Mode::Roam) DisableCursor(); }
+                }
+                break;
+            case Mode::Jumpscare:
+                scareT += dt;
+                shake = 1.1f;   // sustained while the scare plays out
+                if (scareT > 1.35f) Die(deathTitle, ending);
+                break;
+            case Mode::Dead:
+            case Mode::Win:
+                if (IsKeyPressed(KEY_ENTER)) { mode = Mode::Title; }
+                break;
+        }
+
+        // one keyboard owner per frame: the OS text fields only read chars while
+        // the player is at the computer; other modes drain/discard below
+        os.acceptsText = (mode == Mode::SitComputer);
+        // on the phone the real cursor drives the call panel - keep it free and
+        // visible whatever path we took here (EnableCursor unlocks + unhides)
+        if (mode == Mode::Roam && phone.answered) { if (IsCursorHidden()) EnableCursor(); }
+        // at the computer only the projected OS cursor exists - the real one
+        // hides so the two can never appear misaligned
+        else if (mode == Mode::SitComputer && sitT > 0.85f) { if (!IsCursorHidden()) HideCursor(); }
+        else if (mode != Mode::Roam && mode != Mode::Unseating && IsCursorHidden()) ShowCursor();
+        if (mode != Mode::Title && mode != Mode::Pause) { focusApiKey = false; editId = 0; rebinding = -1; }
+        if (mode != Mode::SitComputer && mode != Mode::SitVisitor && !focusApiKey &&
+            !phone.answered && editId == 0)
+            while (GetCharPressed() > 0) {}
+
+        // fake OS renders into a texture that lives on the in-world monitor
+        if (osTexOk) {
+            Vector2 vm{-9999.f, -9999.f};
+            os.interactive = false;
+            if (mode == Mode::SitComputer && sitT > 0.85f) {
+                // traditional cursor: cast the real mouse onto the monitor face
+                Ray r = GetScreenToWorldRay(GetMousePosition(), cam);
+                Vector2 uv;
+                if (office.MonitorUV(r.position, r.direction, uv)) {
+                    vm = {uv.x * (float)osTex.texture.width, uv.y * (float)osTex.texture.height};
+                    os.interactive = true;
+                }
+            }
+            os.mouse = vm;
+            os.clockHour = gameHour;              // taskbar clock tracks shift time
+            BeginTextureMode(osTex);
+            ClearBackground(Color{14, 17, 22, 255});
+            os.Draw(A, osTex.texture.width, osTex.texture.height);
+            EndTextureMode();
+        }
+
+        // post params for this frame
+        fx.time = (float)GetTime();
+        fx.instab = ad.Instability() / 100.f;
+        fx.scare = (mode == Mode::Jumpscare) ? std::min(1.f, scareT / 1.35f) : 0.f;
+
+        // door panel swings for a passing visitor, or stays cracked if the player peeked
+        if (Furni* d = office.Find("door")) {
+            bool crossing = vs.HasActiveVisitor() &&
+                (vs.Cur().state == VState::ToChair || vs.Cur().state == VState::Leaving) &&
+                std::fabs(vs.Cur().pos.z + 5.f) < 1.6f;
+            float tgt = (crossing || doorOpen) ? 1.f : 0.f;
+            float dt = GetFrameTime();
+            // dead-band: at the target we STOP - the old ternary read "at
+            // target" as "closing" and stepped down every frame, so the open
+            // door sat there visibly buzzing 1.0 -> .95 -> .99 -> 1.0
+            if (tgt > doorAnim)      doorAnim = std::min(tgt, doorAnim + 2.6f * dt);
+            else if (tgt < doorAnim) doorAnim = std::max(tgt, doorAnim - 3.2f * dt);
+            float e = doorAnim * doorAnim * (3.f - 2.f * doorAnim);   // smoothstep
+            d->rotY = -78.f * e - doorRattle * (0.6f + doorRattle) *
+                      std::sin((float)GetTime() * 55.f);   // swings inward; banger hits rattle it
+            if (std::getenv("EI_DOORTRACE"))
+                TraceLog(LOG_INFO, "[door] anim=%.3f rotY=%.2f open=%d cross=%d vst=%d z=%.2f",
+                         doorAnim, d->rotY, (int)doorOpen, (int)crossing,
+                         (int)vs.Cur().state, vs.Cur().pos.z);
+        }
+
+        bool worldVisible = (mode != Mode::Dead && mode != Mode::Win);
+        if (fx.ok && worldVisible) DrawWorld();   // fills the scene render texture
+
+        BeginDrawing();
+        ClearBackground(Color{8, 8, 10, 255});
+
+        if (mode == Mode::Title) {
+            if (fx.ok) fx.Blit(); else DrawWorld();
+            DrawTitle();
+        }
+        else if (mode == Mode::Dead || mode == Mode::Win) DrawEnding();
+        else {
+            if (fx.ok) fx.Blit(); else DrawWorld();
+            if (debug && osTexOk) // F3: OS texture thumbnail (FBO content/orientation)
+                DrawTexturePro(osTex.texture,
+                               Rectangle{0, 0, (float)osTex.texture.width, -(float)osTex.texture.height},
+                               Rectangle{10, 10, 312, 192}, Vector2{0, 0}, 0, WHITE);
+            if (mode == Mode::SitVisitor && vs.VisitorSeated())
+                dlg.Draw(A, W, H, vs.Cur().Name(), vs.transcript);
+            if (phone.answered && mode != Mode::Pause)
+                phoneDlg.Draw(A, W, H, JS(phone.ev, "persona"), phone.transcript);
+            else if (phone.ringing && mode != Mode::Pause) {
+                // visible ring indicator so it can't be mistaken for ambience
+                std::string ring = "the desk phone is ringing";
+                Vector2 rts = MeasureTextEx(A.fontSmall, ring.c_str(), 21, 1);
+                float blink = 0.55f + 0.45f * std::sin((float)GetTime() * 9.f);
+                DrawTextEx(A.fontSmall, ring.c_str(),
+                           {W / 2.f - rts.x / 2, H - 130.f}, 21, 1,
+                           Color{235, 200, 110, (unsigned char)(blink * 255)});
+            }
+
+            HUD::DrawClock(A, W, gameHour, debug, ad.Instability(), night);
+            if (mode == Mode::Roam && player.hiding) {
+                // the taped note under the desk - reads itself to you while
+                // you hide: why you're down here, and what comes after
+                static const char* nl[] = {
+                    "a note is taped beneath the desk, in your handwriting:",
+                    "\"if the wrong ones get in - get under. don't breathe.",
+                    " they check the chair. they never check the floor.",
+                    " when the room goes quiet: file the report. - M.\""};
+                float nw = 0;
+                for (auto* s : nl) nw = std::max(nw, MeasureTextEx(A.font, s, 21, 1).x);
+                Rectangle card{W / 2.f - nw / 2.f - 22.f, H - 268.f, nw + 44.f, 128.f};
+                // a soft drop-shadow lifts the card off the dark floor behind it
+                DrawRectangleRounded({card.x + 5.f, card.y + 6.f, card.width, card.height},
+                                     0.07f, 6, Color{0, 0, 0, 110});
+                DrawRectangleRounded(card, 0.07f, 6, Color{214, 200, 162, 246});
+                DrawRectangleLinesEx(card, 1.5f, Color{126, 104, 70, 200});
+                for (int i = 0; i < 4; i++)
+                    DrawTextEx(A.font, nl[i], {card.x + 20.f, card.y + 14.f + i * 26.f},
+                               21, 1, Color{44, 36, 28, 255});
+                const char* hid = "hidden under the desk";
+                Vector2 hs = MeasureTextEx(A.fontSmall, hid, 18, 1);
+                DrawTextEx(A.fontSmall, hid, {W / 2.f - hs.x / 2, H - 104.f}, 18, 1,
+                           Color{140, 175, 190, 200});
+            }
+            HUD::DrawPrompt(A, W, H, mode == Mode::Roam ?
+                (phone.answered ? "[ESC] hang up" : interactLabel) :
+                (mode == Mode::SitComputer
+                    ? ("[" + std::string(KeyName(keys.swap)) + "] face visitor - hold [" +
+                       KeyName(keys.left) + "/" + KeyName(keys.right) + "] lean - [ESC] stand up")
+                    : mode == Mode::SitVisitor
+                    ? ("[" + std::string(KeyName(keys.swap)) + "] face monitor - hold [" +
+                       KeyName(keys.left) + "/" + KeyName(keys.right) + "] lean - [ESC] stand up")
+                    : ""));
+            HUD::DrawNotes(A, W, notes);
+            if (debug) DrawDebugOverlay();
+            if (loreCardT > 0.f && !loreText.empty()) {
+                // the slid-in note, read: same parchment card the hide note uses
+                std::vector<std::string> wl = WrapText(A.font, loreText, 21, 1, W * 0.44f);
+                float nw = 0;
+                for (auto& s : wl) nw = std::max(nw, MeasureTextEx(A.font, s.c_str(), 21, 1).x);
+                Rectangle card{W / 2.f - nw / 2.f - 24.f, H * 0.30f, nw + 48.f,
+                               (float)wl.size() * 28.f + 52.f};
+                DrawRectangleRounded({card.x + 5.f, card.y + 6.f, card.width, card.height},
+                                     0.07f, 6, Color{0, 0, 0, 110});
+                DrawRectangleRounded(card, 0.07f, 6, Color{214, 200, 162, 246});
+                DrawRectangleLinesEx(card, 1.5f, Color{126, 104, 70, 200});
+                for (int i = 0; i < (int)wl.size(); i++)
+                    DrawTextEx(A.font, wl[i].c_str(), {card.x + 24.f, card.y + 16.f + i * 28.f},
+                               21, 1, Color{44, 36, 28, 255});
+                const char* hint = "a note, slid in from somewhere";
+                Vector2 hs = MeasureTextEx(A.fontSmall, hint, 18, 1);
+                DrawTextEx(A.fontSmall, hint, {W / 2.f - hs.x / 2, card.y + card.height - 22.f},
+                           18, 1, Color{120, 100, 72, 255});
+            }
+            if (mode == Mode::Roam && !phone.answered) HUD::DrawCrosshair(W, H);
+            if (mode == Mode::Jumpscare) {
+                // face fills the screen
+                float s = scareT / 1.35f;
+                DrawRectangle(0, 0, W, H, Color{6, 2, 4, (unsigned char)(40 + s * 200)});
+                float r = H * (0.2f + s * 0.65f);
+                DrawCircle(W / 2, H / 2, r, Color{14, 6, 8, 255});
+                DrawCircle(W / 2 - (int)(r * 0.36f), H / 2 - (int)(r * 0.12f), r * 0.11f, Color{230, 225, 210, 255});
+                DrawCircle(W / 2 + (int)(r * 0.36f), H / 2 - (int)(r * 0.12f), r * 0.11f, Color{230, 225, 210, 255});
+                DrawCircle(W / 2, H / 2 + (int)(r * 0.4f), r * 0.16f, Color{40, 10, 10, 255});
+            }
+            if (mode == Mode::Pause) DrawPause();
+        }
+        if (IsKeyPressed(KEY_F12)) TakeScreenshot("screenshot.png");
+        EndDrawing();
+        // dev hook: capture the just-presented frame, then quit (EI_SHOT=seconds)
+        if (shotAt > 0.f && (float)GetTime() >= shotAt) { TakeScreenshot("ei_shot.png"); quit = true; }
+    }
+}
+
+void Game::Shutdown() {
+    SaveSettings();
+    if (osTexOk) UnloadRenderTexture(osTex);
+    fx.Shutdown();
+    llm.Shutdown();
+    audio.Shutdown();
+    A.Unload();
+}

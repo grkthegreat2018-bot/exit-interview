@@ -1,0 +1,308 @@
+{
+ "_doc": "Catalog the LLM may remix into new anomalies. It can ONLY use these parts - no free creation. A remix anomaly is JSON: {id, channel:'office', desc, keywords[], target?|spawn?, mutation{}}. 'target' + mutation alters an existing object; 'spawn' adds a new object built from a spawnable type.",
+ "spawnable_types": [
+  "visitor_chair",
+  "office_chair",
+  "plant",
+  "mug",
+  "bin",
+  "paper_stack",
+  "rug",
+  "poster",
+  "wall_clock",
+  "desk_lamp",
+  "couch",
+  "water_cooler",
+  "door",
+  "bookshelf",
+  "filing_cabinet",
+  "printer",
+  "keyboard",
+  "phone",
+  "vase",
+  "note",
+  "mouse",
+  "pc_tower",
+  "outlet"
+ ],
+ "mutate_fields": [
+  "translate",
+  "pos_set",
+  "rot_set",
+  "scale",
+  "color",
+  "hidden",
+  "eyes",
+  "stopped",
+  "backwards",
+  "art"
+ ],
+ "existing_targets": [
+  "desk",
+  "office_chair",
+  "visitor_chair",
+  "monitor",
+  "keyboard",
+  "mug",
+  "lamp_desk",
+  "papers",
+  "blinds",
+  "door",
+  "light_switch",
+  "photo_frame",
+  "bin",
+  "ceiling_light_1",
+  "ceiling_light_2",
+  "wall_clock",
+  "rug",
+  "bookshelf",
+  "filing_cabinet",
+  "plant_1",
+  "plant_2",
+  "poster_1",
+  "printer",
+  "water_cooler",
+  "desk_phone",
+  "vase",
+  "mouse",
+  "pc_tower",
+  "outlet_floor",
+  "outlet_east",
+  "outlet_west",
+  "outlet_north"
+ ],
+ "spawn_anchors": {
+  "floor_open": [
+   [
+    -3.5,
+    0,
+    -2.5
+   ],
+   [
+    -4.5,
+    0,
+    0.5
+   ],
+   [
+    3.8,
+    0,
+    -1.5
+   ],
+   [
+    4.9,
+    0,
+    -2.4
+   ],
+   [
+    -3.0,
+    0,
+    2.8
+   ],
+   [
+    5.2,
+    0,
+    1.6
+   ]
+  ],
+  "desk_top": [
+   [
+    -0.9,
+    0.86,
+    1.3
+   ],
+   [
+    -0.5,
+    0.86,
+    0.9
+   ],
+   [
+    1.35,
+    0.86,
+    0.75
+   ],
+   [
+    0.55,
+    0.86,
+    1.55
+   ]
+  ],
+  "wall_north": [
+   [
+    -2.6,
+    1.7,
+    -4.885
+   ],
+   [
+    2.0,
+    1.7,
+    -4.885
+   ]
+  ],
+  "wall_east": [
+   [
+    6.94,
+    1.7,
+    -2.6
+   ],
+   [
+    6.94,
+    1.6,
+    0.8
+   ]
+  ],
+  "wall_south": [
+   [
+    -2.0,
+    1.7,
+    4.885
+   ],
+   [
+    2.4,
+    1.8,
+    4.885
+   ]
+  ],
+  "waiting_room": [
+   [
+    -2.5,
+    0,
+    -7.5
+   ],
+   [
+    1.5,
+    0,
+    -7.0
+   ],
+   [
+    4.0,
+    0,
+    -8.5
+   ]
+  ]
+ },
+ "limits": {
+  "size_min": [
+   0.06,
+   0.03,
+   0.02
+  ],
+  "size_max": [
+   2.4,
+   3.4,
+   2.4
+  ],
+  "scale_max": [
+   3.5,
+   3.5,
+   3.5
+  ],
+  "office_min": [
+   -6.9,
+   0,
+   -4.9
+  ],
+  "office_max": [
+   6.9,
+   4.0,
+   4.9
+  ],
+  "waiting_min": [
+   -3.9,
+   0,
+   -10.9
+  ],
+  "waiting_max": [
+   6.9,
+   3.2,
+   -5.1
+  ],
+  "desc_max_len": 160,
+  "keyword_max": 10
+ },
+ "humanoid_parts": {
+  "eyes": [
+   "normal",
+   "black",
+   "none"
+  ],
+  "height": [
+   0.8,
+   1.65
+  ],
+  "skin_tints": [
+   [
+    200,
+    170,
+    145
+   ],
+   [
+    190,
+    185,
+    180
+   ],
+   [
+    150,
+    140,
+    140
+   ],
+   [
+    110,
+    100,
+    105
+   ]
+  ],
+  "shirt_tints": [
+   [
+    80,
+    80,
+    95
+   ],
+   [
+    60,
+    55,
+    60
+   ],
+   [
+    40,
+    45,
+    55
+   ],
+   [
+    90,
+    70,
+    70
+   ]
+  ]
+ },
+ "example": {
+  "id": "remix_mug_army",
+  "channel": "office",
+  "desc": "Three small mugs stand in a row beside the desk phone",
+  "keywords": [
+   "mugs",
+   "cups",
+   "row",
+   "extra",
+   "appeared"
+  ],
+  "spawn": {
+   "id": "rx_mug",
+   "type": "mug",
+   "pos": [
+    -0.2,
+    0.86,
+    1.45
+   ],
+   "size": [
+    0.09,
+    0.11,
+    0.09
+   ],
+   "color": [
+    60,
+    60,
+    80
+   ]
+  }
+ }
+}

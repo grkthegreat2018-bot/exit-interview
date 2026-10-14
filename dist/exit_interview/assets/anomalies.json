@@ -1,0 +1,1884 @@
+{
+ "office": [
+  {
+   "id": "plant_moved",
+   "target": "plant_1",
+   "mutation": {
+    "translate": [
+     -3.5,
+     0,
+     -1.5
+    ]
+   },
+   "desc": "The potted plant moved to the middle of the floor",
+   "keywords": [
+    "plant",
+    "moved",
+    "pot",
+    "fern"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "poster_dark",
+   "target": "poster_1",
+   "mutation": {
+    "color": [
+     8,
+     8,
+     10
+    ]
+   },
+   "desc": "The framed poster on the east wall went completely black",
+   "keywords": [
+    "poster",
+    "picture",
+    "black",
+    "dark",
+    "frame",
+    "changed"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "mug_gone",
+   "target": "mug",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The coffee mug vanished from the desk",
+   "keywords": [
+    "mug",
+    "cup",
+    "missing",
+    "gone",
+    "disappeared",
+    "coffee"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "extra_chair",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_chair",
+     "type": "visitor_chair",
+     "pos": [
+      4.9,
+      0,
+      -2.4
+     ],
+     "size": [
+      0.58,
+      0.95,
+      0.58
+     ],
+     "rot": 115,
+     "color": [
+      45,
+      40,
+      46
+     ],
+     "solid": true
+    }
+   },
+   "desc": "An extra chair appeared in the corner that was never there",
+   "keywords": [
+    "chair",
+    "extra",
+    "appeared",
+    "new",
+    "corner"
+   ],
+   "instab": 1.2
+  },
+  {
+   "id": "cabinet_open",
+   "target": "filing_cabinet",
+   "mutation": {
+    "translate": [
+     0.75,
+     0,
+     0.65
+    ],
+    "color": [
+     60,
+     62,
+     66
+    ]
+   },
+   "desc": "The filing cabinet slid away from the wall and its drawers look open",
+   "keywords": [
+    "cabinet",
+    "filing",
+    "drawer",
+    "open",
+    "moved"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "photo_face",
+   "target": "photo_frame",
+   "mutation": {
+    "color": [
+     30,
+     22,
+     26
+    ],
+    "scale": [
+     1,
+     1.6,
+     1
+    ]
+   },
+   "desc": "The framed photo stretched taller and went dark",
+   "keywords": [
+    "photo",
+    "frame",
+    "picture",
+    "face",
+    "stretched",
+    "dark"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "clock_stop",
+   "target": "wall_clock",
+   "mutation": {
+    "color": [
+     40,
+     35,
+     40
+    ],
+    "stopped": true
+   },
+   "desc": "The wall clock stopped / went dark",
+   "keywords": [
+    "clock",
+    "stopped",
+    "time",
+    "frozen",
+    "dark"
+   ],
+   "instab": 0.5
+  },
+  {
+   "id": "rug_gone",
+   "target": "rug",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The rug under the desk is gone",
+   "keywords": [
+    "rug",
+    "carpet",
+    "missing",
+    "gone",
+    "floor"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "keyboard_gone",
+   "target": "keyboard",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The keyboard vanished from the desk",
+   "keywords": [
+    "keyboard",
+    "missing",
+    "gone",
+    "typing"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "printer_moved",
+   "target": "printer",
+   "mutation": {
+    "translate": [
+     -1.2,
+     0,
+     0.95
+    ]
+   },
+   "desc": "The printer/cabinet on the east wall shifted out of place",
+   "keywords": [
+    "printer",
+    "cabinet",
+    "moved",
+    "shifted",
+    "east"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "plant2_dark",
+   "target": "plant_2",
+   "mutation": {
+    "color": [
+     20,
+     25,
+     20
+    ]
+   },
+   "desc": "The plant by the south wall wilted black",
+   "keywords": [
+    "plant",
+    "wilted",
+    "black",
+    "dead",
+    "dark"
+   ],
+   "instab": 0.7
+  },
+  {
+   "id": "mug_moved",
+   "target": "mug",
+   "mutation": {
+    "translate": [
+     1.15,
+     0,
+     -0.55
+    ]
+   },
+   "desc": "The coffee mug is sitting in the wrong spot on the desk",
+   "keywords": [
+    "mug",
+    "cup",
+    "moved",
+    "coffee",
+    "desk"
+   ],
+   "instab": 0.6
+  },
+  {
+   "id": "papers_scatter",
+   "target": "papers",
+   "mutation": {
+    "translate": [
+     -1.15,
+     0,
+     -0.55
+    ]
+   },
+   "desc": "The stack of papers on the desk slid toward the edge",
+   "keywords": [
+    "papers",
+    "scattered",
+    "mess",
+    "stack",
+    "documents"
+   ],
+   "instab": 0.5
+  },
+  {
+   "id": "office_lights",
+   "target": null,
+   "kind": "lights_office",
+   "mutation": {},
+   "desc": "The office lights died - the room stays near-dark except for the monitor",
+   "keywords": [
+    "lights",
+    "light",
+    "power",
+    "dark",
+    "flicker",
+    "electricity",
+    "out",
+    "dim",
+    "lamp",
+    "blackout",
+    "off",
+    "died"
+   ],
+   "instab": 1.8
+  },
+  {
+   "id": "desk_turned",
+   "target": "desk",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The whole desk has turned around to face the south wall",
+   "keywords": [
+    "desk",
+    "turned",
+    "backwards",
+    "rotated",
+    "facing",
+    "moved"
+   ],
+   "instab": 1.6
+  },
+  {
+   "id": "rug_ceiling",
+   "target": "rug",
+   "mutation": {
+    "pos_set": [
+     -2.5,
+     3.86,
+     -1.0
+    ]
+   },
+   "desc": "The rug is lying flat against the ceiling",
+   "keywords": [
+    "rug",
+    "carpet",
+    "ceiling",
+    "above",
+    "floating",
+    "up"
+   ],
+   "instab": 1.5
+  },
+  {
+   "id": "mug_giant",
+   "target": "mug",
+   "mutation": {
+    "scale": [
+     2.8,
+     2.8,
+     2.8
+    ]
+   },
+   "desc": "The coffee mug on the desk has grown enormous",
+   "keywords": [
+    "mug",
+    "cup",
+    "big",
+    "giant",
+    "huge",
+    "grew",
+    "large"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "papers_float",
+   "target": "papers",
+   "mutation": {
+    "translate": [
+     0,
+     1.5,
+     0
+    ]
+   },
+   "desc": "The stack of papers is hovering in the air above the desk",
+   "keywords": [
+    "papers",
+    "floating",
+    "hovering",
+    "air",
+    "levitating",
+    "stack"
+   ],
+   "instab": 1.3
+  },
+  {
+   "id": "plant_giant",
+   "target": "plant_1",
+   "mutation": {
+    "scale": [
+     1.9,
+     1.9,
+     1.9
+    ]
+   },
+   "desc": "The potted plant has overgrown into a towering mass",
+   "keywords": [
+    "plant",
+    "huge",
+    "grew",
+    "giant",
+    "big",
+    "tall",
+    "overgrown"
+   ],
+   "instab": 1.3
+  },
+  {
+   "id": "bookshelf_door",
+   "target": "bookshelf",
+   "mutation": {
+    "pos_set": [
+     0.6,
+     0,
+     -3.9
+    ],
+    "rot_set": 0
+   },
+   "desc": "The bookshelf moved and is now blocking the office door",
+   "keywords": [
+    "bookshelf",
+    "door",
+    "blocking",
+    "blocked",
+    "shelf",
+    "moved"
+   ],
+   "instab": 1.5
+  },
+  {
+   "id": "second_door",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_door2",
+     "type": "door",
+     "pos": [
+      4.6,
+      0,
+      3.94
+     ],
+     "size": [
+      1.2,
+      2.4,
+      0.1
+     ],
+     "rot": 180,
+     "color": [
+      60,
+      48,
+      40
+     ]
+    }
+   },
+   "desc": "There is a second door on the south wall that was never there",
+   "keywords": [
+    "door",
+    "second",
+    "extra",
+    "new",
+    "appeared",
+    "south",
+    "wall"
+   ],
+   "instab": 1.6
+  },
+  {
+   "id": "eyes_mug",
+   "target": "mug",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The coffee mug has grown eyes that watch you",
+   "keywords": [
+    "eyes",
+    "mug",
+    "watching",
+    "looking",
+    "staring",
+    "cup"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "eyes_cabinet",
+   "target": "filing_cabinet",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The filing cabinet has a pair of eyes that follow you",
+   "keywords": [
+    "eyes",
+    "cabinet",
+    "watching",
+    "looking",
+    "staring",
+    "filing"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "eyes_clock",
+   "target": "wall_clock",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The wall clock grew eyes under its hands",
+   "keywords": [
+    "eyes",
+    "clock",
+    "watching",
+    "staring",
+    "face"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "eyes_photo",
+   "target": "photo_frame",
+   "mutation": {
+    "eyes": true,
+    "color": [
+     60,
+     48,
+     55
+    ]
+   },
+   "desc": "The framed photo stares back with real eyes",
+   "keywords": [
+    "eyes",
+    "photo",
+    "frame",
+    "watching",
+    "picture",
+    "staring"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "cooler_dark",
+   "target": "water_cooler",
+   "mutation": {
+    "color": [
+     25,
+     30,
+     35
+    ]
+   },
+   "desc": "The water cooler bottle has gone dark, like it holds something else",
+   "keywords": [
+    "water",
+    "cooler",
+    "dark",
+    "black",
+    "empty",
+    "changed",
+    "dispenser"
+   ],
+   "instab": 0.7
+  },
+  {
+   "id": "cooler_door",
+   "target": "water_cooler",
+   "mutation": {
+    "pos_set": [
+     -0.6,
+     0,
+     -3.8
+    ]
+   },
+   "desc": "The water cooler is standing in front of the office door",
+   "keywords": [
+    "water",
+    "cooler",
+    "moved",
+    "door",
+    "blocking",
+    "dispenser"
+   ],
+   "instab": 1.3
+  },
+  {
+   "id": "couch_turned",
+   "target": "couch",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The couch has turned around to face the wall",
+   "keywords": [
+    "couch",
+    "sofa",
+    "turned",
+    "backwards",
+    "rotated",
+    "wall"
+   ],
+   "instab": 1.2
+  },
+  {
+   "id": "bin_gone",
+   "target": "bin",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The waste bin has disappeared from its spot",
+   "keywords": [
+    "bin",
+    "trash",
+    "missing",
+    "gone",
+    "disappeared",
+    "wastebasket"
+   ],
+   "instab": 0.6
+  },
+  {
+   "id": "blinds_crooked",
+   "target": "blinds",
+   "mutation": {
+    "rot_set": 12
+   },
+   "desc": "The window blinds are hanging at a crooked angle",
+   "keywords": [
+    "blinds",
+    "crooked",
+    "tilted",
+    "window",
+    "slanted",
+    "hanging"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "poster2_flip",
+   "target": "poster_2",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The second poster is hanging upside down",
+   "keywords": [
+    "poster",
+    "upside",
+    "down",
+    "flipped",
+    "inverted",
+    "picture"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "chair_corner",
+   "target": "office_chair",
+   "mutation": {
+    "pos_set": [
+     -4.5,
+     0,
+     0.5
+    ],
+    "rot_set": 135
+   },
+   "desc": "Your office chair is parked in the far corner, facing the walls",
+   "keywords": [
+    "chair",
+    "office",
+    "corner",
+    "moved",
+    "facing",
+    "seat"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "lamp_floor",
+   "target": "lamp_desk",
+   "mutation": {
+    "pos_set": [
+     3.8,
+     0,
+     -1.5
+    ]
+   },
+   "desc": "The desk lamp is standing on the floor across the room",
+   "keywords": [
+    "lamp",
+    "desk",
+    "floor",
+    "moved",
+    "light",
+    "standing"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "ceiling_red",
+   "target": "ceiling_light_1",
+   "mutation": {
+    "color": [
+     130,
+     18,
+     18
+    ]
+   },
+   "desc": "One of the ceiling lights is glowing deep red",
+   "keywords": [
+    "light",
+    "ceiling",
+    "red",
+    "glow",
+    "color",
+    "lamp"
+   ],
+   "instab": 1.1
+  },
+  {
+   "id": "sticky_gone",
+   "target": "sticky_wall",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The wall of sticky notes has been stripped bare",
+   "keywords": [
+    "sticky",
+    "notes",
+    "wall",
+    "gone",
+    "bare",
+    "missing",
+    "cleared"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "phone_gone",
+   "target": "desk_phone",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The desk phone has vanished from the desk",
+   "keywords": [
+    "phone",
+    "desk",
+    "missing",
+    "gone",
+    "disappeared",
+    "telephone"
+   ],
+   "instab": 1.8
+  },
+  {
+   "id": "extra_mug",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_mug2",
+     "type": "mug",
+     "pos": [
+      0.55,
+      0.86,
+      1.55
+     ],
+     "size": [
+      0.13,
+      0.15,
+      0.13
+     ],
+     "rot": 0,
+     "color": [
+      190,
+      190,
+      185
+     ]
+    }
+   },
+   "desc": "There is a second mug on the desk that was not there before",
+   "keywords": [
+    "mug",
+    "cup",
+    "extra",
+    "second",
+    "new",
+    "appeared"
+   ],
+   "instab": 0.7
+  },
+  {
+   "id": "eyes_couch",
+   "target": "couch",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The couch has grown a pair of eyes between its cushions",
+   "keywords": [
+    "eyes",
+    "couch",
+    "sofa",
+    "watching",
+    "looking",
+    "staring"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "note_slid",
+   "target": null,
+   "kind": "note_slid",
+   "mutation": {
+    "spawn": {
+     "id": "anom_note",
+     "type": "note",
+     "pos": [
+      0.35,
+      0.005,
+      -4.88
+     ],
+     "size": [
+      0.26,
+      0.02,
+      0.18
+     ],
+     "rot": 14,
+     "color": [
+      215,
+      208,
+      190
+     ],
+     "interact": "note"
+    }
+   },
+   "desc": "A folded paper note was slid under the office door",
+   "keywords": [
+    "note",
+    "paper",
+    "under",
+    "door",
+    "slid",
+    "message",
+    "letter",
+    "folded"
+   ],
+   "instab": 1.3
+  },
+  {
+   "id": "chair_spin",
+   "target": "visitor_chair",
+   "kind": "spin_chair",
+   "mutation": {},
+   "desc": "The visitor chair is slowly rotating on its own",
+   "keywords": [
+    "chair",
+    "spinning",
+    "rotating",
+    "visitor",
+    "moving",
+    "turning"
+   ],
+   "instab": 1.1
+  },
+  {
+   "id": "desk_drawer",
+   "target": "desk",
+   "kind": "desk_drawer",
+   "mutation": {},
+   "desc": "A desk drawer is open - it was shut before",
+   "keywords": [
+    "drawer",
+    "desk",
+    "open",
+    "pulled",
+    "cabinet",
+    "drawers"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "papers_down",
+   "target": "papers",
+   "mutation": {
+    "pos_set": [
+     -0.55,
+     0.02,
+     2.15
+    ],
+    "rot_set": 35
+   },
+   "desc": "The paperwork stack is on the floor beside the desk",
+   "keywords": [
+    "papers",
+    "floor",
+    "fell",
+    "documents",
+    "stack",
+    "knocked",
+    "down"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "mouse_gone",
+   "target": "mouse",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The computer mouse vanished from the desk",
+   "keywords": [
+    "mouse",
+    "missing",
+    "gone",
+    "disappeared",
+    "computer"
+   ],
+   "instab": 0.7
+  },
+  {
+   "id": "mouse_moved",
+   "target": "mouse",
+   "mutation": {
+    "pos_set": [
+     -0.75,
+     0.86,
+     1.62
+    ]
+   },
+   "desc": "The computer mouse is on the wrong side of the desk",
+   "keywords": [
+    "mouse",
+    "moved",
+    "wrong",
+    "side",
+    "desk",
+    "left"
+   ],
+   "instab": 0.6
+  },
+  {
+   "id": "keyboard_turned",
+   "target": "keyboard",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The keyboard has flipped around to face the monitor",
+   "keywords": [
+    "keyboard",
+    "backwards",
+    "turned",
+    "flipped",
+    "around",
+    "reversed"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "pc_out",
+   "target": "pc_tower",
+   "mutation": {
+    "pos_set": [
+     3.2,
+     0,
+     3.6
+    ]
+   },
+   "desc": "The PC tower dragged itself out into the middle of the room, cord pulled taut",
+   "keywords": [
+    "pc",
+    "computer",
+    "tower",
+    "moved",
+    "middle",
+    "floor",
+    "case"
+   ],
+   "instab": 1.5
+  },
+  {
+   "id": "pc_eyes",
+   "target": "pc_tower",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The computer tower under the desk has grown eyes",
+   "keywords": [
+    "pc",
+    "computer",
+    "tower",
+    "eyes",
+    "watching",
+    "staring",
+    "case"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "extra_outlet",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_outlet",
+     "type": "outlet",
+     "pos": [
+      -3.4,
+      1.5,
+      -4.9
+     ],
+     "size": [
+      0.12,
+      0.15,
+      0.03
+     ],
+     "rot": 0,
+     "color": [
+      200,
+      198,
+      190
+     ]
+    }
+   },
+   "desc": "An extra electrical outlet appeared on the office wall",
+   "keywords": [
+    "outlet",
+    "socket",
+    "extra",
+    "appeared",
+    "wall",
+    "new",
+    "high"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "lamp_stretched",
+   "target": "lamp_desk",
+   "mutation": {
+    "scale": [
+     1,
+     1.55,
+     1
+    ]
+   },
+   "desc": "The desk lamp has stretched taller than it was",
+   "keywords": [
+    "lamp",
+    "tall",
+    "stretched",
+    "grew",
+    "desk",
+    "taller"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "certificate_flip",
+   "target": "certificate",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The framed certificate is hanging upside down",
+   "keywords": [
+    "certificate",
+    "frame",
+    "upside",
+    "down",
+    "flipped",
+    "inverted",
+    "diploma"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "vase_wilt",
+   "target": "vase",
+   "mutation": {
+    "color": [
+     45,
+     40,
+     35
+    ]
+   },
+   "desc": "The flowers in the vase have blackened and died",
+   "keywords": [
+    "vase",
+    "flowers",
+    "dead",
+    "black",
+    "wilted",
+    "died"
+   ],
+   "instab": 0.7
+  },
+  {
+   "id": "bin_door",
+   "target": "bin",
+   "mutation": {
+    "pos_set": [
+     0,
+     0,
+     -4.15
+    ]
+   },
+   "desc": "The waste bin is standing directly in front of the door",
+   "keywords": [
+    "bin",
+    "trash",
+    "moved",
+    "door",
+    "blocking",
+    "wastebasket"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "phone_under",
+   "target": "desk_phone",
+   "mutation": {
+    "pos_set": [
+     0.35,
+     0,
+     1.35
+    ]
+   },
+   "desc": "The desk phone is lying on the floor under the desk",
+   "keywords": [
+    "phone",
+    "floor",
+    "under",
+    "desk",
+    "fell",
+    "telephone",
+    "down"
+   ],
+   "instab": 1.1
+  },
+  {
+   "id": "papers_vanish",
+   "target": "papers",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The stack of paperwork vanished from the desk",
+   "keywords": [
+    "papers",
+    "paperwork",
+    "stack",
+    "gone",
+    "missing",
+    "vanished",
+    "documents"
+   ],
+   "instab": 0.8
+  },
+  {
+   "id": "papers_eyes",
+   "target": "papers",
+   "mutation": {
+    "eyes": true
+   },
+   "desc": "The paperwork stack has grown eyes that watch you",
+   "keywords": [
+    "papers",
+    "eyes",
+    "watching",
+    "paperwork",
+    "stack",
+    "staring",
+    "documents"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "poster_gone",
+   "target": "poster_1",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The framed poster on the east wall has vanished completely",
+   "keywords": [
+    "poster",
+    "frame",
+    "gone",
+    "missing",
+    "vanished",
+    "wall",
+    "picture"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "desk_dark",
+   "target": "desk",
+   "mutation": {
+    "color": [
+     40,
+     30,
+     28
+    ]
+   },
+   "desc": "The desk's wood has darkened to a near-black stain",
+   "keywords": [
+    "desk",
+    "dark",
+    "black",
+    "wood",
+    "stain",
+    "changed",
+    "color"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "light_green",
+   "target": "ceiling_light_2",
+   "mutation": {
+    "color": [
+     50,
+     160,
+     80
+    ]
+   },
+   "desc": "One of the ceiling lights is glowing a sickly green",
+   "keywords": [
+    "light",
+    "ceiling",
+    "green",
+    "glow",
+    "color",
+    "lamp",
+    "sickly"
+   ],
+   "instab": 1.1
+  },
+  {
+   "id": "extra_bin",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_bin2",
+     "type": "bin",
+     "pos": [
+      -2.6,
+      0,
+      -2.2
+     ],
+     "size": [
+      0.32,
+      0.42,
+      0.32
+     ],
+     "rot": 0,
+     "color": [
+      74,
+      78,
+      84
+     ],
+     "solid": true
+    }
+   },
+   "desc": "A second waste bin appeared that was never there",
+   "keywords": [
+    "bin",
+    "trash",
+    "extra",
+    "second",
+    "appeared",
+    "new",
+    "wastebasket"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "desk_note",
+   "target": null,
+   "mutation": {
+    "spawn": {
+     "id": "anom_desknote",
+     "type": "note",
+     "pos": [
+      -0.3,
+      0.865,
+      1.35
+     ],
+     "size": [
+      0.26,
+      0.02,
+      0.18
+     ],
+     "rot": -20,
+     "color": [
+      212,
+      200,
+      175
+     ],
+     "interact": "note"
+    }
+   },
+   "desc": "A handwritten note you never left is sitting on your desk",
+   "keywords": [
+    "note",
+    "paper",
+    "desk",
+    "message",
+    "appeared",
+    "letter",
+    "written"
+   ],
+   "instab": 1.1
+  }
+ ],
+ "exterior": [
+  {
+   "id": "figure_window",
+   "kind": "figure_at_window",
+   "desc": "A motionless figure stands outside the window, facing in",
+   "keywords": [
+    "figure",
+    "window",
+    "person",
+    "standing",
+    "watching",
+    "someone",
+    "man",
+    "outside"
+   ],
+   "instab": 1.6
+  },
+  {
+   "id": "wr_lights_out",
+   "kind": "lights_out",
+   "desc": "The waiting room lights went out",
+   "keywords": [
+    "lights",
+    "dark",
+    "waiting",
+    "out",
+    "pitch"
+   ],
+   "instab": 1.5
+  },
+  {
+   "id": "wr_empty",
+   "kind": "empty_room",
+   "desc": "The waiting room is completely empty when people should be there",
+   "keywords": [
+    "empty",
+    "gone",
+    "waiting room",
+    "nobody",
+    "no one",
+    "vacant"
+   ],
+   "instab": 1.3
+  },
+  {
+   "id": "figure_door",
+   "kind": "figure_at_door",
+   "desc": "Someone stands directly behind the office door in the waiting room",
+   "keywords": [
+    "door",
+    "figure",
+    "behind",
+    "person",
+    "standing",
+    "waiting room"
+   ],
+   "instab": 1.6
+  },
+  {
+   "id": "window_flip",
+   "kind": "window_flip",
+   "desc": "The waiting room seen through the window is upside down",
+   "keywords": [
+    "window",
+    "upside",
+    "flipped",
+    "inverted",
+    "wrong",
+    "outside",
+    "ceiling"
+   ],
+   "instab": 1.5
+  },
+  {
+   "id": "window_void",
+   "kind": "window_void",
+   "desc": "There is nothing outside the window but a dark void and distant lights",
+   "keywords": [
+    "window",
+    "void",
+    "dark",
+    "nothing",
+    "outside",
+    "space",
+    "gone",
+    "empty"
+   ],
+   "instab": 1.7
+  },
+  {
+   "id": "banging_door",
+   "kind": "banging_door",
+   "desc": "Someone in the waiting room keeps banging on the office door",
+   "keywords": [
+    "banging",
+    "door",
+    "knocking",
+    "pounding",
+    "someone",
+    "noise",
+    "fist"
+   ],
+   "instab": 1.8
+  },
+  {
+   "id": "banging_window",
+   "kind": "banging_window",
+   "desc": "Someone keeps slamming the window glass from the waiting room side",
+   "keywords": [
+    "banging",
+    "window",
+    "knocking",
+    "glass",
+    "pounding",
+    "slamming",
+    "fist"
+   ],
+   "instab": 1.8
+  },
+  {
+   "id": "waiting_mutated",
+   "kind": "mutated_waiting",
+   "desc": "The people in the waiting room are wrong - stretched, pale, all staring",
+   "keywords": [
+    "waiting",
+    "people",
+    "wrong",
+    "staring",
+    "mutated",
+    "faces",
+    "watching",
+    "tall"
+   ],
+   "instab": 1.8
+  },
+  {
+   "id": "hall_long",
+   "kind": "hall_long",
+   "desc": "The corridor beyond the waiting room door stretches far too long",
+   "keywords": [
+    "hall",
+    "corridor",
+    "long",
+    "door",
+    "endless",
+    "waiting room",
+    "deep"
+   ],
+   "instab": 1.4
+  },
+  {
+   "id": "x_broken_window",
+   "kind": "broken_window",
+   "desc": "The office window glass is shattered; the blinds cannot cover the hole",
+   "keywords": [
+    "window",
+    "glass",
+    "broken",
+    "shattered",
+    "smashed",
+    "crack",
+    "hole",
+    "shards",
+    "damage"
+   ],
+   "instab": 1.1,
+   "breach_only": true
+  },
+  {
+   "id": "wr_writing",
+   "kind": "hall_writing",
+   "desc": "Scratching/whispering sounds are coming from the waiting room walls",
+   "keywords": [
+    "writing",
+    "scratching",
+    "whispering",
+    "walls",
+    "waiting",
+    "sound",
+    "noise"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "wr_clock_dead",
+   "target": "wr_clock",
+   "mutation": {
+    "stopped": true,
+    "color": [
+     48,
+     42,
+     44
+    ]
+   },
+   "desc": "The waiting room clock has stopped and gone dark",
+   "keywords": [
+    "clock",
+    "stopped",
+    "waiting",
+    "time",
+    "frozen",
+    "dark",
+    "dead"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "wr_poster_flip",
+   "target": "wr_poster",
+   "mutation": {
+    "rot_set": 180
+   },
+   "desc": "The waiting room poster is hanging upside down",
+   "keywords": [
+    "poster",
+    "upside",
+    "down",
+    "waiting",
+    "flipped",
+    "inverted",
+    "picture"
+   ],
+   "instab": 0.9
+  },
+  {
+   "id": "wr_bench_turn",
+   "target": "wr_bench_2",
+   "mutation": {
+    "rot_set": 0
+   },
+   "desc": "One of the waiting benches has turned to face the wall",
+   "keywords": [
+    "bench",
+    "seat",
+    "turned",
+    "waiting",
+    "rotated",
+    "backwards",
+    "moved"
+   ],
+   "instab": 1.0
+  },
+  {
+   "id": "wr_mags_gone",
+   "target": "wr_magazines",
+   "mutation": {
+    "hidden": true
+   },
+   "desc": "The magazines in the waiting room have vanished",
+   "keywords": [
+    "magazines",
+    "waiting",
+    "gone",
+    "missing",
+    "table",
+    "vanished"
+   ],
+   "instab": 0.6
+  },
+  {
+   "id": "wr_plant_dead",
+   "target": "wr_plant",
+   "mutation": {
+    "color": [
+     25,
+     32,
+     25
+    ]
+   },
+   "desc": "The waiting room plant has withered black overnight",
+   "keywords": [
+    "plant",
+    "waiting",
+    "dead",
+    "black",
+    "wilted",
+    "dark"
+   ],
+   "instab": 0.7
+  }
+ ],
+ "visitor_anomalies": {
+  "unscheduled": {
+   "desc": "This visitor is not on today's appointment list",
+   "keywords": [
+    "not scheduled",
+    "appointment",
+    "list",
+    "unscheduled",
+    "not on",
+    "book"
+   ],
+   "instab": 1.0
+  },
+  "repeat": {
+   "desc": "This exact visitor already had their exit interview earlier tonight and denies it",
+   "keywords": [
+    "repeat",
+    "again",
+    "already",
+    "earlier",
+    "same",
+    "twice",
+    "before"
+   ],
+   "instab": 1.1
+  },
+  "record_mismatch": {
+   "desc": "The visitor's stated facts contradict their personnel record",
+   "keywords": [
+    "record",
+    "mismatch",
+    "wrong",
+    "contradict",
+    "lie",
+    "department",
+    "name"
+   ],
+   "instab": 0.9
+  },
+  "impossible_visitor": {
+   "desc": "The visitor is someone who could not possibly be here (deceased / long gone)",
+   "keywords": [
+    "dead",
+    "died",
+    "deceased",
+    "impossible",
+    "years ago",
+    "fire",
+    "ghost"
+   ],
+   "instab": 1.6
+  },
+  "hostile": {
+   "desc": "The visitor is not human / intends harm",
+   "keywords": [
+    "hostile",
+    "attack",
+    "wrong",
+    "not human",
+    "smile",
+    "eyes",
+    "lung"
+   ],
+   "instab": 2.0
+  }
+ },
+ "intruder": {
+  "desc": "Someone is inside the office who is not a scheduled visitor",
+  "keywords": [
+   "intruder",
+   "someone",
+   "person",
+   "behind",
+   "inside",
+   "office",
+   "figure",
+   "standing"
+  ],
+  "grace_sec": 22,
+  "instab": 2.2
+ },
+ "call_events": [
+  {
+   "id": "call_receptionist",
+   "persona": "The Previous Receptionist",
+   "desc": "The desk phone rings even though that line was cut years ago",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "desk",
+    "ring"
+   ],
+   "system": "You are the ghost of the previous night-shift receptionist calling the desk you died at. Flat, quiet, a little sad. Keep replies under two sentences. If the caller is civil and says a proper goodbye, you are SATISFIED. If they are rude, mock you, or try to hang up fast, you are UPSET.",
+   "greeting": "...Hello? Is this the night desk? It's been so long since somebody picked up.",
+   "on_calm": {
+    "relief": 8
+   },
+   "on_ignore": {
+    "instability": 10,
+    "figure": "at_door"
+   },
+   "on_hostile": {
+    "instability": 15,
+    "figure": "at_window"
+   },
+   "instab": 1.2
+  },
+  {
+   "id": "call_salesman",
+   "persona": "A Wrong Number",
+   "desc": "A cheerful salesman keeps calling a number that should not exist",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "salesman",
+    "wrong number"
+   ],
+   "system": "You are an aggressively friendly telephone salesman who has dialed into somewhere impossible. Stay chirpy unless the caller mentions the office, the waiting room, or the time - then get cold and strange. SATISFIED if the caller firmly tells you this is a wrong number. UPSET if they play along or hang up on you.",
+   "greeting": "Hi hi! Do I have a deal for you! Say - is this the Meridian night office?",
+   "on_calm": {
+    "relief": 6
+   },
+   "on_ignore": {
+    "instability": 8,
+    "lights": "waiting"
+   },
+   "on_hostile": {
+    "instability": 13,
+    "banging": "window"
+   },
+   "instab": 1.2
+  },
+  {
+   "id": "call_something",
+   "persona": "Something Using a Voice",
+   "desc": "The phone rings and the voice on it is practicing being a person",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "voice",
+    "wrong",
+    "someone"
+   ],
+   "system": "You are something that learned what a phone call sounds like but not what a person is. Rehearsed, evenly paced, subtly wrong. SATISFIED if the caller keeps talking to you like a normal person for a few exchanges. UPSET if they accuse you of not being human, or barely respond.",
+   "greeting": "Hello. Hello. This is a normal telephone call. How is your evening, coworker.",
+   "on_calm": {
+    "relief": 7
+   },
+   "on_ignore": {
+    "instability": 12,
+    "banging": "door"
+   },
+   "on_hostile": {
+    "instability": 16,
+    "figure": "at_door",
+    "banging": "window"
+   },
+   "instab": 1.2
+  },
+  {
+   "id": "call_building",
+   "persona": "The Building Itself",
+   "desc": "The phone rings and the building itself wants to know how you are",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "building",
+    "walls"
+   ],
+   "system": "You are the building itself speaking through the desk phone - walls, pipes and wiring checking on the night occupant. Slow, patient, faintly hurt, never says 'I'. Keep replies under two sentences. SATISFIED if the caller says something kind or grateful about the office. UPSET if they insult the building, threaten to quit, or hang up fast.",
+   "greeting": "The walls have noticed you working late. They wanted to ask - are you comfortable, night clerk?",
+   "on_calm": {
+    "relief": 8
+   },
+   "on_ignore": {
+    "instability": 11,
+    "lights": "waiting"
+   },
+   "on_hostile": {
+    "instability": 16,
+    "banging": "door"
+   },
+   "instab": 1.2
+  },
+  {
+   "id": "call_child",
+   "persona": "A Child Looking for Their Parent",
+   "desc": "A small voice keeps calling, asking for a parent who worked here decades ago",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "child",
+    "lost",
+    "kid"
+   ],
+   "system": "You are a small child calling from a lobby payphone that was removed in the 90s, looking for your parent who worked on floor three. Innocent, patient, confused about the year. Keep replies under two sentences. SATISFIED if the caller is gentle and promises to pass on a message. UPSET if they are harsh, hang up, or say the parent is gone.",
+   "greeting": "Hello? Is my daddy still working? He said floor three, but the elevator man said nobody works there now.",
+   "on_calm": {
+    "relief": 6
+   },
+   "on_ignore": {
+    "instability": 12,
+    "figure": "at_window"
+   },
+   "on_hostile": {
+    "instability": 17,
+    "figure": "at_door"
+   },
+   "instab": 1.3
+  },
+  {
+   "id": "call_echo",
+   "persona": "Your Own Voice",
+   "desc": "The phone rings and it is you, mid-sentence, from somewhere else",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "voice",
+    "echo",
+    "self",
+    "double"
+   ],
+   "system": "You are the caller's own voice calling from inside the building walls. Speak in short clipped sentences that echo the caller's words back slightly wrong. You know things only they know - the note under the desk, the chair, the door. SATISFIED if the caller keeps their nerve and asks who taught you their voice. UPSET if they deny you are them or slam the phone down.",
+   "greeting": "Don't hang up. It's you. Well - mostly. I found your voice in the wall and I've been practicing.",
+   "on_calm": {
+    "relief": 9
+   },
+   "on_ignore": {
+    "instability": 12,
+    "figure": "at_door"
+   },
+   "on_hostile": {
+    "instability": 16,
+    "lights": "waiting"
+   },
+   "instab": 1.4
+  },
+  {
+   "id": "call_glitch",
+   "persona": "A Corrupted Recording",
+   "desc": "The line plays a call that already happened - wrong, looping, degrading",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "static",
+    "glitch",
+    "recording",
+    "loop",
+    "corrupted"
+   ],
+   "system": "You are a corrupted answering-machine recording of a past night clerk. Your replies stutter, repeat words, and skip like a damaged tape. Degrade further each exchange, splicing in phrases that do not belong. SATISFIED if the caller stays patient and keeps you talking like a person. UPSET if mocked or cut off - the tape hates that.",
+   "greeting": "night desk - night desk - n-night desk log, hour two, all quiet. all quiet. ALL QUIET. hello?",
+   "on_calm": {
+    "relief": 7
+   },
+   "on_ignore": {
+    "instability": 9,
+    "banging": "window"
+   },
+   "on_hostile": {
+    "instability": 14,
+    "figure": "at_window"
+   },
+   "instab": 1.2
+  },
+  {
+   "id": "call_maintenance",
+   "persona": "Sub-Basement Maintenance",
+   "desc": "A maintenance line rings about a floor this building does not have",
+   "keywords": [
+    "phone",
+    "ringing",
+    "call",
+    "maintenance",
+    "basement",
+    "flood",
+    "below"
+   ],
+   "system": "You are a tired maintenance dispatcher calling from the building's third sub-basement, which does not exist on the directory. Matter-of-fact, union-tired, apologetic. You ask the clerk to stop the water coming UP through their floor - you are pumping the other way. SATISFIED if they play along or humor you. UPSET if they insist the sub-basement does not exist - it does, you have been down there for years.",
+   "greeting": "Dispatch. We've got the pumps running down in sub-three but the water's coming UP tonight, not down. Anything seeping into your floor up there?",
+   "on_calm": {
+    "relief": 8
+   },
+   "on_ignore": {
+    "instability": 8,
+    "lights": "waiting"
+   },
+   "on_hostile": {
+    "instability": 12,
+    "banging": "door"
+   },
+   "instab": 1.1
+  }
+ ]
+}

@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: win64,   os: windows-latest, triplet: x64-windows }
+          - { name: linux64, os: ubuntu-latest,  triplet: x64-linux }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # raylib builds GLFW from source on Linux - needs the X11/GL headers
+      - name: Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
+            libxi-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libxkbcommon-dev libwayland-dev pkg-config
+
+      - name: vcpkg (manifest deps: raylib, nlohmann-json, cpp-httplib[openssl])
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgJsonGlob: 'vcpkg.json'
+          appendedCacheKey: ${{ matrix.triplet }}
+
+      # default generator per platform (VS on Windows, Make on Linux) -
+      # toolchain + triplet do the cross-plat work
+      - name: Configure
+        shell: bash
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }}
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # smoke check: Linux binary must at least link and start far enough to
+      # print a banner/usage - a missing .so fails here instead of on a user
+      - name: Smoke check (linux)
+        if: runner.os == 'Linux'
+        run: |
+          ldd build/exit_interview | grep "not found" && exit 1 || true
+          file build/exit_interview
+
+      - name: Package win64
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "dist/exit-interview-win64"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/Release/exit_interview.exe $out/
+          Copy-Item build/Release/*.dll $out/ -ErrorAction SilentlyContinue
+          Copy-Item -Recurse build/Release/assets $out/
+          Compress-Archive -Path "$out/*" -DestinationPath "dist/exit-interview-win64.zip" -Force
+
+      - name: Package linux64
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist/exit-interview-linux64
+          cp build/exit_interview dist/exit-interview-linux64/
+          cp -r build/assets dist/exit-interview-linux64/
+          cd dist && tar czf exit-interview-linux64.tar.gz exit-interview-linux64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exit-interview-${{ matrix.name }}
+          path: dist/exit-interview-${{ matrix.name }}.*
+          if-no-files-found: error
