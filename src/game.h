@@ -220,6 +220,15 @@ private:
         HumanoidApp app;            // resolved at parse time
     };
     std::vector<DbgNpc> dbgNpcs;
+    float dbgT = 0.f;   // dev anim/seq clock - accumulates dt so EI_RECDUMP's
+                        // fixed timestep keeps poses stable frame-to-frame
+    // EI_SEQ scripted gameplay timeline (trailer capture): "t,cmd; ..."
+    std::vector<std::pair<float, std::string>> seq;
+    size_t seqIdx = 0;
+    std::set<int> simActive;                    // keys held by `hold:` actions
+    std::vector<std::pair<int, float>> simHold; // keycode -> seconds remaining
+    bool seqInvite = false;                     // invite the visitor the moment they reach the door
+    void ExecSeq(const std::string& cmd);
     void DrawDbgNpcs() const;
 
     // scripted camera path (EI_PATH env): smoothstep-lerped keyframes the

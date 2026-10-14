@@ -49,10 +49,23 @@ SCENES = [
          env={},
          path="0,0.3,1.7,-3.4,2,-4;6.5,-0.4,1.5,-0.6,8,-3"),
 
-    # drift in on the desk monitor - the fake OS is a signature shot
-    dict(name="monitor",
-         env={},
-         path="0,1.2,1.55,2.6,176,-8;5,0.72,1.28,1.95,184,-16"),
+    # GAMEPLAY: a real visitor makes the trip - corridor approach, knock,
+    # door swings open, they walk in and take the chair. Player POV from
+    # behind the desk; ends seated facing them. ~22s, trimmed in encode.
+    dict(name="arrival",
+         env={"EI_SEQ": "0.3,visitor;15.5,door;20.8,sitv;25,quit"},
+         trim=(10.0, 24.0)),
+
+    # GAMEPLAY: the interview - swap off the monitor, ask a line
+    dict(name="interview",
+         env={"EI_SEQ": "0.2,visitor;0.5,invite;16,sitv;18,say:state your business.;22,quit"},
+         trim=(16.5, 21.5)),
+
+    # GAMEPLAY: seated at the terminal - REPORT app then PAPERWORK flips on
+    # the in-world monitor OS
+    dict(name="computer",
+         env={"EI_SEQ": "0.3,sit;1.8,app:report;4.2,app:paper;6.5,quit"},
+         trim=(1.2, 6.0)),
 
     # waiting room pan - benches, magazines, seated dummies (EI_NOVIS keeps
     # the real ambient cast out so the shot is fully controlled)
@@ -63,15 +76,16 @@ SCENES = [
                         "3.0,0,-8.45,0,seated,glasses,look"},
          path="0,-5.0,1.6,-6.6,118,-5;7,-1.6,1.6,-9.4,196,-4"),
 
-    # a visitor waits in the open doorway; slow push toward them
-    dict(name="visitor",
-         env={"EI_DOOR": "1", "EI_NPC": "0.0,0,-5.5,0,look;0.4,0,-6.3,20,look"},
-         path="0,1.3,1.55,-1.6,174,-2;6,0.9,1.5,-2.9,179,-3"),
-
     # the one "wrongness" beat - the desk floats where it should not
     dict(name="wrongness",
          env={"EI_ANOM": "desk_float"},
          path="0,0.4,1.6,-3.2,-2,-2;5.5,-0.3,1.45,-1.6,-7,-6"),
+
+    # GAMEPLAY: under the desk - hide pocket + the taped note card reads
+    # itself while crouched (chair-side gap view back into the room)
+    dict(name="hide",
+         env={"EI_SEQ": "0.2,tp:0,1.55,0;0.6,hold:Q,4;5.5,quit"},
+         trim=(0.8, 5.0)),
 
     # pull back out through the doorway, office receding
     dict(name="pullback",
@@ -122,8 +136,9 @@ def capture(scene):
     shutil.rmtree(rec, ignore_errors=True)
 
     env = dict(os.environ)
-    env.update({"EI_PLAY": "1", "EI_PATH": scene["path"],
-                "EI_RECDUMP": str(FPS), "EI_UPDATE": "off"})
+    env.update({"EI_PLAY": "1", "EI_RECDUMP": str(FPS), "EI_UPDATE": "off"})
+    if scene.get("path"):
+        env["EI_PATH"] = scene["path"]
     env.update(scene.get("env", {}))
     print(f"[{scene['name']}] capturing...")
     subprocess.run([EXE], cwd=CWD, env=env)
@@ -202,7 +217,20 @@ def main():
             continue
         n = capture(s)
         clip = os.path.join(WORK, s["name"] + ".mp4")
-        encode_clip(os.path.join(WORK, s["name"]), n, clip)
+        trim = s.get("trim")
+        if trim:
+            # keep only [t0,t1) seconds of the capture - deterministic at
+            # the fixed FPS, so gameplay beats land exactly where scripted
+            lo, hi = int(trim[0] * FPS), int(trim[1] * FPS)
+            keep = [f"f_{i:05d}.png" for i in range(lo + 1, min(hi, n - 1) + 1)]
+            tdir = os.path.join(WORK, s["name"] + "_trim")
+            os.makedirs(tdir, exist_ok=True)
+            for i, f in enumerate(keep, 1):
+                shutil.copy2(os.path.join(WORK, s["name"], f),
+                             os.path.join(tdir, f"f_{i:05d}.png"))
+            encode_clip(tdir, len(keep), clip)
+        else:
+            encode_clip(os.path.join(WORK, s["name"]), n, clip)
         clips.append(clip)
         if only:
             break

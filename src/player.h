@@ -1,6 +1,11 @@
 #pragma once
 #include "common.h"
 
+// EI_SEQ held-key injection (dev hook) - game.cpp owns the set and points
+// this at it; treated as extra held keys alongside real input
+inline std::set<int>* g_simKeys = nullptr;
+inline bool SimDown(int k) { return g_simKeys && g_simKeys->count(k); }
+
 // rebindable controls - persisted in settings.json, edited on the CONTROLS tab
 struct KeyMap {
     int fwd = KEY_W, back = KEY_S, left = KEY_A, right = KEY_D;
@@ -41,7 +46,7 @@ public:
         sprinting = false;
         // hold-to-crouch; standing back up under a desk is impossible, the
         // caller forces crouch while the player sits inside its footprint
-        bool wantCrouch = moveEnabled && IsKeyDown(km.crouch);
+        bool wantCrouch = moveEnabled && (IsKeyDown(km.crouch) || SimDown(km.crouch));
         if (forcedCrouch) wantCrouch = true;
         crouching = wantCrouch;
         eyeH += ((crouching ? crouchH : height) - eyeH) * std::min(1.f, dt * 10.f);
@@ -53,10 +58,10 @@ public:
         }
         if (moveEnabled) {
             Vector2 mv{0, 0};
-            if (IsKeyDown(km.fwd)) mv.y += 1;
-            if (IsKeyDown(km.back)) mv.y -= 1;
-            if (IsKeyDown(km.left)) mv.x -= 1;
-            if (IsKeyDown(km.right)) mv.x += 1;
+            if (IsKeyDown(km.fwd)   || SimDown(km.fwd))   mv.y += 1;
+            if (IsKeyDown(km.back)  || SimDown(km.back))  mv.y -= 1;
+            if (IsKeyDown(km.left)  || SimDown(km.left))  mv.x -= 1;
+            if (IsKeyDown(km.right) || SimDown(km.right)) mv.x += 1;
             moving = (mv.x != 0.f || mv.y != 0.f);
             if (moving) {
                 float len = std::sqrt(mv.x * mv.x + mv.y * mv.y);
@@ -67,7 +72,7 @@ public:
                 // hold Shift to sprint; faster bob sells the speed
                 float sp = speed;
                 if (crouching) sp *= 0.45f;                     // slow and low
-                else if (IsKeyDown(km.sprint) ||
+                else if (IsKeyDown(km.sprint) || SimDown(km.sprint) ||
                          (km.sprint == KEY_LEFT_SHIFT && IsKeyDown(KEY_RIGHT_SHIFT))) {
                     sp *= sprintMul; sprinting = true;
                 }

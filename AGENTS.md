@@ -293,11 +293,23 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   Input ignored; auto-quits 1s past the last key. HUD suppressed.
 - `EI_RECDUMP=<fps>` — dumps every rendered frame to `shots/rec/f_%05d.png`
   and switches the sim to a FIXED dt=1/fps timestep so PNG write cost never
-  warps motion. The `EI_PATH` clock also runs on this accumulator, so path
-  timing stays frame-exact. Auto-enables `cleanDebug`.
+  warps motion. The `EI_PATH`/`EI_SEQ`/`EI_NPC` clocks all run on the dt
+  accumulator (`dbgT`), never wall-clock GetTime() - otherwise real-time
+  deltas between dumped frames read as NPC vibration.
+- `EI_SEQ="t,cmd; ..."` — scripted gameplay timeline (trailer capture).
+  Commands: `tp:x,z[,yaw[,pitch]]`, `look:yaw,pitch`,
+  `hold:W|A|S|D|SHIFT|Q,secs` (simulated key holds via g_simKeys ->
+  SimDown in player.h), `interact`, `door` (invite if a visitor waits),
+  `invite` (auto-invites the moment one reaches the door), `sit`, `sitv`
+  (sit + guarantee SitVisitor), `swap`, `stand`, `visitor` (CallNextEarly),
+  `blinds`, `lights`, `say:<line>` (SayToVisitor),
+  `app:report|book|records|phone|paper|building|none`, `anom:<id>`,
+  `kind:<kind>`, `call`, `notify:<text>`, `quit`. Runs off dbgT, so it is
+  frame-exact under EI_RECDUMP.
 - `EI_CLEAN=1` — clean-recording mode: flycam/path mechanics still work but
   all debug chrome is hidden (F3 overlay, osTex thumbnail, HUD clock,
-  prompts, toasts, crosshair, ring indicator). Implied by `EI_RECDUMP`.
+  prompts, toasts, crosshair, ring indicator). Implied by `EI_PATH` (NOT
+  by EI_RECDUMP alone - EI_SEQ gameplay shots want the HUD on).
 - `EI_UPDATE=off|fake` — disable the github update check / inject a canned
   "update available" popup for UI shots. After a real apply, the apply
   script drops `_upd_done.txt` in the install root and the game shows the

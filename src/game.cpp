@@ -206,9 +206,11 @@ bool Game::Init() {
         recDumpFps = (float)std::atof(rd);
         if (recDumpFps > 0.f) std::filesystem::create_directories("shots/rec");
     }
-    // EI_CLEAN=1 (or any EI_RECDUMP run): keep flycam/path mechanics but hide
-    // all debug chrome - F3 overlay, osTex thumbnail, prompts, toasts, clock
-    if (recDumpFps > 0.f || std::getenv("EI_CLEAN")) cleanDebug = true;
+    // EI_CLEAN=1 or any scripted-path run: keep flycam/path mechanics but hide
+    // all debug chrome - F3 overlay, osTex thumbnail, prompts, toasts, clock.
+    // Gameplay captures (EI_SEQ player POV, no path) KEEP the HUD - prompts,
+    // crosshair, clock and the hide note are part of the footage.
+    if (!pathKeys.empty() || std::getenv("EI_CLEAN")) cleanDebug = true;
     if (const char* np = std::getenv("EI_NPC")) {
         // dev: posed humanoid dummies, no AI - for debug screenshots.
         // spec: "x,y,z[,yaw][,flag|key=value...] ; x,y,z[...] ..."
@@ -299,6 +301,25 @@ bool Game::Init() {
             dbgNpcs.push_back(n);
             idx++;
         }
+    }
+    if (const char* sq = std::getenv("EI_SEQ")) {
+        // dev: scripted gameplay timeline "t,cmd; t,cmd; ..." driven off the
+        // fixed-dt clock so EI_RECDUMP runs stay frame-exact. Commands:
+        //   tp:x,z,yaw[,pitch]   teleport+look     look:yaw,pitch
+        //   hold:W|A|S|D|SHIFT|Q,secs            interact  door  invite
+        //   sit  stand  visitor  blinds  lights  say:<line>
+        //   app:report|book|records|phone|paper|building|none
+        //   anom:<id>  kind:<kind>  call  notify:<text>  quit
+        std::string spec = sq;
+        for (size_t p = 0, q; p <= spec.size(); p = (q == std::string::npos ? spec.size() + 1 : q + 1)) {
+            q = spec.find(';', p);
+            std::string one = spec.substr(p, q == std::string::npos ? q : q - p);
+            size_t c = one.find(',');
+            if (c != std::string::npos)
+                seq.push_back({(float)atof(one.c_str()), one.substr(c + 1)});
+        }
+        std::sort(seq.begin(), seq.end(), [](auto& a, auto& b) { return a.first < b.first; });
+        g_simKeys = &simActive;
     }
     if (std::getenv("EI_HIDE")) {   // dev: spawn crouched under the desk
         if (const Furni* desk = office.Find("desk"))
@@ -524,6 +545,88 @@ static std::string PrettyName(std::string id) {
     for (auto& c : id) if (c == '_') c = ' ';
     if (!id.empty()) id[0] = (char)std::toupper((unsigned char)id[0]);
     return id;
+}
+
+
+// EI_SEQ action executor - every command drives the same functions real
+// input does, so trailer captures show actual gameplay, not fakes
+void Game::ExecSeq(const std::string& c) {
+    size_t col = c.find(':');
+    std::string op = ToLower(col == std::string::npos ? c : c.substr(0, col));
+    std::string arg = col == std::string::npos ? "" : c.substr(col + 1);
+    std::vector<float> num;
+    for (size_t p = 0, q; p <= arg.size(); p = (q == std::string::npos ? arg.size() + 1 : q + 1)) {
+        q = arg.find(',', p);
+        num.push_back((float)atof(arg.substr(p, q == std::string::npos ? q : q - p).c_str()));
+    }
+    if (op == "tp") {          // tp:x,z[,yaw[,pitch]]
+        if (num.size() >= 2) player.pos = {num[0], 0.f, num[1]};
+        if (num.size() >= 3) player.yaw = num[2];
+        if (num.size() >= 4) player.pitch = num[3];
+    } else if (op == "look") { // look:yaw[,pitch]
+        if (!num.empty()) player.yaw = num[0];
+        if (num.size() >= 2) player.pitch = num[1];
+    } else if (op == "hold") { // hold:W|A|S|D|SHIFT|Q,secs
+        size_t kc = arg.find(',');
+        std::string kn = ToLower(kc == std::string::npos ? arg : arg.substr(0, kc));
+        float secs = kc == std::string::npos ? 1.f : (float)atof(arg.substr(kc + 1).c_str());
+        int k = kn == "w" ? keys.fwd : kn == "s" ? keys.back :
+                kn == "a" ? keys.left : kn == "d" ? keys.right :
+                kn == "shift" ? keys.sprint : kn == "q" ? keys.crouch : 0;
+        if (k && secs > 0.f) simHold.push_back({k, secs});
+    } else if (op == "interact") {
+        DoInteract();
+    } else if (op == "door") {
+        if (vs.VisitorAtDoor()) { doorOpen = false; vs.InviteIn(); audio.Play(AudioBank::Sfx::Whoosh, 0.7f); }
+        else { doorOpen = !doorOpen; audio.Play(AudioBank::Sfx::Creak, 0.55f); }
+    } else if (op == "invite") {
+        seqInvite = true;   // fires the moment the visitor reaches the door
+    } else if (op == "sit") {
+        SitDown();
+    } else if (op == "sitv") {
+        // sit and face the visitor - SitDown lands on the monitor when the
+        // seat choice races their sit; flip back if they're already seated
+        SitDown();
+        if (mode == Mode::SitComputer && vs.VisitorSeated()) {
+            mode = Mode::SitVisitor;
+            dlg.focused = true;
+        }
+    } else if (op == "stand") {
+        if (mode == Mode::SitVisitor || mode == Mode::SitComputer) StandUp();
+    } else if (op == "swap") {   // TAB: monitor <-> visitor while seated
+        if (mode == Mode::SitComputer || mode == Mode::SitVisitor) {
+            mode = (mode == Mode::SitComputer) ? Mode::SitVisitor : Mode::SitComputer;
+            dlg.focused = (mode == Mode::SitVisitor);
+            if (mode == Mode::SitComputer) RefocusOsField();
+        }
+    } else if (op == "visitor") {
+        vs.CallNextEarly(office);
+    } else if (op == "blinds") {
+        office.blindsOpen = !office.blindsOpen;
+    } else if (op == "lights") {
+        manualLightsOff = !manualLightsOff;
+    } else if (op == "say") {
+        if (!arg.empty()) SayToVisitor(arg);
+    } else if (op == "app") {
+        std::string a = ToLower(arg);
+        os.app = a == "report" ? FakeOS::App::Report :
+                 a == "book" || a == "appt" ? FakeOS::App::Appointments :
+                 a == "records" ? FakeOS::App::Records :
+                 a == "phone" ? FakeOS::App::Phone :
+                 a == "paper" ? FakeOS::App::Paperwork :
+                 a == "building" ? FakeOS::App::Building : FakeOS::App::None;
+    } else if (op == "anom") {
+        ad.DebugForceOffice(arg.c_str(), office);
+    } else if (op == "kind") {
+        ad.DebugForceKind(arg.c_str(), office);
+    } else if (op == "call") {
+        if (A.anomalies.contains("call_events"))
+            ad.DebugCallEvent(A.anomalies["call_events"][0]);
+    } else if (op == "notify") {
+        Notify(arg);
+    } else if (op == "quit") {
+        quit = true;
+    }
 }
 
 
@@ -994,6 +1097,22 @@ void Game::UpdateUnseating(float dt) {
 
 
 void Game::UpdateCommon(float dt) {
+    dbgT += dt;
+    // EI_SEQ scripted timeline + held simulated keys
+    while (seqIdx < seq.size() && seq[seqIdx].first <= dbgT)
+        ExecSeq(seq[seqIdx++].second);
+    if (seqInvite && vs.VisitorAtDoor()) {
+        seqInvite = false;
+        doorOpen = false;
+        vs.InviteIn();
+        audio.Play(AudioBank::Sfx::Whoosh, 0.7f);
+        Notify(vs.Cur().Name() + " is coming in. Get seated.");
+    }
+    if (!simHold.empty()) {
+        simActive.clear();
+        for (auto& h : simHold) { h.second -= dt; if (h.second > 0.f) simActive.insert(h.first); }
+        std::erase_if(simHold, [](const auto& h) { return h.second <= 0.f; });
+    }
     gameHour += dt / JF(Cfg()["game"], "real_seconds_per_game_hour", 200.f);
     if (gameHour >= JF(Cfg()["game"], "shift_end_hour", 30.f)) {
         WinShift(false);
@@ -1426,7 +1545,7 @@ void Game::DrawDbgNpcs() const {
     // posed debug dummies (EI_NPC) - frozen or animated in place, no AI
     for (const DbgNpc& n : dbgNpcs) {
         float t = n.frozen ? n.anim
-                           : n.anim + (float)GetTime() * (n.walk > 0.f ? 5.5f : 1.f);
+                           : n.anim + dbgT * (n.walk > 0.f ? 5.5f : 1.f);
         DrawHumanoid(n.pos, n.yaw, n.app, n.seated, t, n.raise, n.seatH, n.walk, n.detain,
                      n.look ? cam.position : Vector3{});
     }
