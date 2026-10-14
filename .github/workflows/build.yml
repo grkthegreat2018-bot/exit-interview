@@ -31,7 +31,7 @@ jobs:
             libxi-dev libgl1-mesa-dev libglu1-mesa-dev \
             libxkbcommon-dev libwayland-dev pkg-config
 
-      - name: vcpkg (manifest deps: raylib, nlohmann-json, cpp-httplib[openssl])
+      - name: "vcpkg (manifest deps - raylib, nlohmann-json, cpp-httplib[openssl])"
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: 'vcpkg.json'
