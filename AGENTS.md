@@ -14,6 +14,18 @@ build\Release\exit_interview.exe     # must run with assets/ next to it (auto-co
 vcpkg toolchain: `D:/windsurf/vcpkg` (in CMakePresets.json). Deps: raylib,
 nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
 
+## Releases / cross-platform
+
+- `.github/workflows/build.yml` — push to GitHub builds **win64** (VS) and
+  **linux64** (ubuntu-latest + X11 dev headers + vcpkg `x64-linux`) and
+  uploads `exit-interview-win64.zip` / `exit-interview-linux64.tar.gz`
+  artifacts. No local Linux needed; the source has no Windows-only APIs.
+- `linux` CMake preset exists for a WSL/manual build (`$env{VCPKG_ROOT}`
+  toolchain, ninja, `build-linux/`).
+- Credits/repo line on the title are data-driven: `game.credits` and
+  `game.repo_url` in `assets/config.json` — fix the URL after the repo
+  is created.
+
 ## Architecture
 
 - `src/game.cpp` — Init, state machine + core glue (modes: Title/Roam/
@@ -71,13 +83,16 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
 - `src/fakeos.*` — monitor UI (apps). `src/dialogui.h` — interview panel.
 - `src/audio.h` — synthesized WAV sounds at runtime, incl. instability
   drone (SetDroneLevel) + hum, Buzz/Heart/Creak sfx. One binary asset
-  family: streamed MP3 menu themes in `assets/Music/` (Music stream,
-  `music.looping` - tracks authored to loop at the seam; ~2.2s fade-in;
-  failed loads remembered in `musicBad` and skipped). Title/Dead/Win
-  keep it playing, alternating the two tracks; shift start stops it.
-  Volume = master x per-category slider (AUDIO tab, all cap at 200%):
-  vol_sfx (one-shots), vol_ambience (hum), vol_drone (instability bed),
-  vol_music (menu themes).
+  family: streamed menu themes in `assets/Music/` (Music stream,
+  `music.looping`; ~2.2s fade-in; failed loads remembered in `musicBad`
+  and skipped). The rotation is directory-scanned every time `night`
+  changes - drop any .mp3/.flac/.ogg/.wav in and it joins. `not as it
+  seems.flac` is gated to night >= 2 (survive a full shift first).
+  Title/Dead/Win keep it playing; shift start stops it. A now-playing
+  chip (name + elapsed/length + progress) sits top-left on the title.
+  `Menu_*.mp3` were synthesized by `.devin/gen_music.py` (numpy -> wav ->
+  ffmpeg lame). Volume = master x per-category slider (AUDIO tab, all
+  cap at 200%): vol_sfx, vol_ambience, vol_drone, vol_music.
 - `src/fx.h` — render pipeline: point-light shader (ambient + up to 10
   lights + fog + world-noise albedo) for the 3D pass into a supersampled
   scene RenderTexture (`render_scale` in config), then a post blit
