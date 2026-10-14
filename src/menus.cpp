@@ -213,7 +213,7 @@ void Game::DrawTitle() {
                             "Made by GRKTheGreat & Devin Desktop - 2026 - v1.0.0");
         std::string disc = JS(Cfg()["game"], "ai_disclaimer",
                               "made with AI assistance");
-        std::string repo = JS(Cfg()["game"], "repo_url", "github.com/GRKTheGreat/exit-interview");
+        std::string repo = JS(Cfg()["game"], "repo_url", "github.com/grkthegreat2018-bot/exit-interview");
         ts = MeasureTextEx(A.fontSmall, cr.c_str(), 16, 1);
         DrawTextEx(A.fontSmall, cr.c_str(), {W - ts.x - 16.f, H - 78.f}, 16, 1, Color{120, 125, 135, 255});
         ts = MeasureTextEx(A.fontSmall, disc.c_str(), 16, 1);

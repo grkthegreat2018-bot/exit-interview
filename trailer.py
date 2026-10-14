@@ -99,7 +99,7 @@ CARDS = [
     ("EXIT INTERVIEW",                "report the anomalies. survive the shift.", 3.4),
 ]
 END_CARD = ("GRKTheGreat & Devin Desktop - 2026",
-            "made with AI   -   github.com/GRKTheGreat/exit-interview", 4.0)
+            "made with AI   -   github.com/grkthegreat2018-bot/exit-interview", 4.0)
 
 
 def run(cmd, **kw):
