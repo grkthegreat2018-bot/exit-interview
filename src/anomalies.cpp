@@ -116,8 +116,14 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
         }
         if (pick == "office") SpawnOffice(office);
         else if (pick == "exterior") SpawnExterior(office, vs);
-        else if (pick == "visitor") SpawnVisitorCorruption(vs);
-        else if (pick == "intruder") SpawnIntruder(office);
+        else if (pick == "visitor") {
+            if (vs.VisitorSeated() && vs.Cur().anomaly.empty()) SpawnVisitorCorruption(vs);
+            else SpawnOffice(office);   // empty chair: the roll falls back to the room
+        }
+        else if (pick == "intruder") {
+            if (!intruderActive && !office.intruderSpawns.empty()) SpawnIntruder(office);
+            else SpawnOffice(office);
+        }
         else if (pick == "call") {
             // the desk phone rings - persona picked now, Game handles the call.
             // Stock call_events are scripted content - they ring even under
@@ -149,6 +155,53 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
     (void)gameHour; (void)notify;
 }
 
+// flag-driven kinds reveal themselves through the ROOM, not the furni they
+// may also carry - the corridor stretches, the lights die, something knocks.
+// A no-op furni mutation can't hide them, so they skip the visibility check.
+static const std::set<std::string> kFlagKinds = {
+    "figure_at_window", "figure_at_door", "lights_out", "lights_office",
+    "empty_room", "window_flip", "window_void", "hall_long", "banging_door",
+    "banging_window", "mutated_waiting", "broken_window", "hall_writing",
+    "phone_call", "note_slid", "spin_chair", "desk_drawer", "intruder"};
+
+// would the mutation actually change what the target LOOKS like? pos_set to
+// the same spot, rot_set to the same angle, a tint it already wears - any of
+// those spawns a ghost anomaly the player can never find, only guess
+static bool MutationVisible(const json& m, const Furni& s) {
+    for (auto& [k, v] : m.items()) {
+        if (k == "translate") {
+            Vector3 d = JV3(v);
+            if (std::fabs(d.x) + std::fabs(d.y) + std::fabs(d.z) > 1e-3f) return true;
+        } else if (k == "pos_set") {
+            if (Vector3Distance(JV3(v), s.pos) > 0.02f) return true;
+        } else if (k == "rot_set") {
+            if (std::fabs(v.get<float>() - s.rotY) > 1.f) return true;
+        } else if (k == "scale") {
+            Vector3 sc = JV3(v, {1.f, 1.f, 1.f});   // a multiplier, not a size
+            if (std::fabs(sc.x - 1.f) + std::fabs(sc.y - 1.f) + std::fabs(sc.z - 1.f) > 0.02f) return true;
+        } else if (k == "color") {
+            if (v.is_array() && v.size() >= 3 &&
+                (v[0].get<int>() != s.color.r || v[1].get<int>() != s.color.g ||
+                 v[2].get<int>() != s.color.b)) return true;
+        } else if (k == "hidden") {
+            if (v.get<bool>() != s.hidden) return true;
+        } else if (k == "eyes") {
+            if (v.get<bool>() != s.eyes) return true;
+        } else if (k == "stopped") {
+            if (v.get<bool>() != s.stopped) return true;
+        } else if (k == "backwards") {
+            if (v.get<bool>() != s.backwards) return true;
+        } else if (k == "fly") {
+            if (v.get<bool>() != s.fly) return true;
+        } else if (k == "art") {
+            if (v.is_string() && v.get<std::string>() != s.art) return true;
+        } else {
+            return true;   // spawn / unknown keys always change the room
+        }
+    }
+    return false;
+}
+
 // a mutation that changes where something IS (pos/rot) must never play out in
 // the player's sightline or while they sit at the desk - furniture sliding
 // around under a stare reads as a glitch, not a haunting
@@ -165,6 +218,40 @@ bool AnomalyDirector::TargetWatched(const json& d, Office& office) const {
     return f && seenFn({f->pos.x, f->pos.y + f->size.y * 0.5f, f->pos.z});
 }
 
+// an anomaly the player can never find is worse than none: it drains the room
+// and can only be brute-guessed. A def is unspawnable when its target already
+// carries a live anomaly (the second change hides inside the first - a dark
+// tint on an already-hidden poster, "stopped" on a frozen clock), when the
+// target is missing/hidden, or when the mutation is a no-op against the
+// target's current state.
+bool AnomalyDirector::Undetectable(const json& d, Office& office) const {
+    std::string tgt = JS(d, "target");
+    const Furni* f = tgt.empty() ? nullptr : office.FindC(tgt);
+    const json& mut = d.value("mutation", json::object());
+    const json* spw = mut.contains("spawn") ? &mut["spawn"] : nullptr;
+    std::string kind = JS(d, "kind");
+    bool flaggy = kFlagKinds.count(kind) > 0;
+    // one live anomaly per target / per spawned prop - a second change hides
+    // inside the first (a dark tint on an already-hidden poster, "stopped"
+    // on a frozen clock)
+    for (auto* l : {&active, &pending}) for (auto& a : *l) {
+        if (!tgt.empty() && a.hadTarget && a.snapshot.id == tgt) return true;
+        if (spw && !a.spawnedId.empty() && a.spawnedId == JS(*spw, "id")) return true;
+    }
+    if (f && f->hidden) return true;
+    // room flags are booleans: a live same-kind entry already owns the door
+    // figure / banging / lights-out state, so a second pure-flag def adds
+    // nothing. Combo defs (flag + furni delta) still count through their
+    // mutation half.
+    bool kindLive = false;
+    if (flaggy)
+        for (auto* l : {&active, &pending}) for (auto& a : *l)
+            if (a.kind == kind) kindLive = true;
+    bool furniDelta = spw || (f && MutationVisible(mut, *f));
+    if (flaggy) return kindLive && !furniDelta;
+    return !furniDelta;
+}
+
 void AnomalyDirector::SpawnOffice(Office& office) {
     // severity ceiling per night: night 1 learns the loop on quiet oddities,
     // the loud/violent kinds join later (they also drain harder, so an early
@@ -176,7 +263,8 @@ void AnomalyDirector::SpawnOffice(Office& office) {
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
         bool live = false;
         for (auto& a : active) if (a.id == id) live = true;
-        if (!used && !live && !TargetWatched(d, office) && JF(d, "instab", 1.f) <= sevCap)
+        if (!used && !live && !TargetWatched(d, office) && !Undetectable(d, office) &&
+            JF(d, "instab", 1.f) <= sevCap)
             pool.push_back(&d);
     }
     if (pool.empty()) return;
@@ -184,6 +272,7 @@ void AnomalyDirector::SpawnOffice(Office& office) {
     ActiveAnomaly a;
     a.id = JS(d, "id");
     a.channel = "office";
+    lastSpawnChannel = "office";
     a.kind = JS(d, "kind");
     a.desc = JS(d, "desc");
     for (auto& k : d["keywords"]) a.keywords.push_back(k.get<std::string>());
@@ -198,6 +287,8 @@ void AnomalyDirector::SpawnOffice(Office& office) {
     if (d["mutation"].contains("spawn"))
         a.spawnedId = JS(d["mutation"]["spawn"], "id");
     active.push_back(a);
+    TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=office target=%s",
+             a.id.c_str(), a.kind.empty() ? "-" : a.kind.c_str(), tgt.empty() ? "-" : tgt.c_str());
 }
 
 void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
@@ -209,7 +300,8 @@ void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
         bool live = false;
         for (auto& a : active) if (a.id == id) live = true;
-        if (!used && !live && !TargetWatched(d, office) && JF(d, "instab", 1.f) <= sevCap)
+        if (!used && !live && !TargetWatched(d, office) && !Undetectable(d, office) &&
+            JF(d, "instab", 1.f) <= sevCap)
             pool.push_back(&d);
     }
     if (pool.empty()) { SpawnOffice(office); return; }
@@ -217,6 +309,7 @@ void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
     ActiveAnomaly a;
     a.id = JS(d, "id");
     a.channel = "exterior";
+    lastSpawnChannel = "exterior";
     a.kind = JS(d, "kind");
     a.desc = JS(d, "desc");
     for (auto& k : d["keywords"]) a.keywords.push_back(k.get<std::string>());
@@ -232,6 +325,8 @@ void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
         if (d["mutation"].contains("spawn")) a.spawnedId = JS(d["mutation"]["spawn"], "id");
     }
     active.push_back(a);
+    TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=exterior target=%s",
+             a.id.c_str(), a.kind.c_str(), tgt.empty() ? "-" : tgt.c_str());
     ApplyExteriorFlags(office, vs);
 }
 
@@ -263,6 +358,7 @@ void AnomalyDirector::SpawnVisitorCorruption(VisitorSystem& vs) {
     a.t0 = elapsed;
     a.instab = JF(d, "instab", 1.f);
     active.push_back(a);
+    lastSpawnChannel = "visitor";
 }
 
 void AnomalyDirector::SpawnIntruder(Office& office) {
@@ -279,6 +375,7 @@ void AnomalyDirector::SpawnIntruder(Office& office) {
     a.t0 = elapsed;
     a.instab = JF(defs["intruder"], "instab", 1.8f);
     active.push_back(a);
+    lastSpawnChannel = "intruder";
 }
 
 void AnomalyDirector::ClearIntruder(Office& office) {
@@ -456,6 +553,7 @@ void AnomalyDirector::EnsureVisitor(const std::string& kind) {
     a.t0 = elapsed;
     a.instab = JF(d, "instab", 1.f);
     active.push_back(a);
+    lastSpawnChannel = "visitor";
 }
 
 void AnomalyDirector::ClearChannel(const std::string& channel) {
@@ -489,6 +587,9 @@ bool AnomalyDirector::DebugForceKind(const std::string& kind, Office& office) {
             }
             a.t0 = elapsed;
             active.push_back(a);
+            lastSpawnChannel = ch;
+            TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=%s target=%s",
+                     a.id.c_str(), a.kind.c_str(), ch, tgt.empty() ? "-" : tgt.c_str());
             return true;
         }
         return false;
@@ -506,6 +607,8 @@ void AnomalyDirector::DebugCallEvent(const json& ev) {
     if (ev.contains("keywords"))
         for (auto& k : ev["keywords"]) a.keywords.push_back(k.get<std::string>());
     active.push_back(a);
+    lastSpawnChannel = "call";
+    TraceLog(LOG_INFO, "[anomaly] spawned %s kind=phone_call channel=call", a.id.c_str());
 }
 
 json AnomalyDirector::TakeCallEvent() {
@@ -690,6 +793,7 @@ bool AnomalyDirector::ApplyRemixJson(const std::string& text, Office& office, st
     office.ApplyMutationAnimated(target, mut);
     if (mut.contains("spawn")) an.spawnedId = JS(mut["spawn"], "id");
     active.push_back(an);
+    lastSpawnChannel = "office";
     return true;
 }
 
@@ -706,6 +810,9 @@ void AnomalyDirector::DebugForceOffice(const std::string& id, Office& office) {
         if (d["mutation"].contains("spawn")) a.spawnedId = JS(d["mutation"]["spawn"], "id");
         a.t0 = elapsed;
         active.push_back(a);
+        lastSpawnChannel = "office";
+        TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=office target=%s",
+                 a.id.c_str(), a.kind.empty() ? "-" : a.kind.c_str(), tgt.empty() ? "-" : tgt.c_str());
         return;
     }
 }

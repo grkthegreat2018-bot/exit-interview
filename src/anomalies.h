@@ -97,6 +97,10 @@ public:
 
     const std::vector<ActiveAnomaly>& Active() const { return active; }
 
+    // channel of the most recent spawn - Game steers the "something changed"
+    // cue so a waiting-room anomaly doesn't send the player hunting the office
+    const std::string& LastSpawnChannel() const { return lastSpawnChannel; }
+
     // set by Game: returns true when the player can currently see this point
     // (or is seated at the desk). Positional mutations skip watched targets -
     // furniture gliding across the room in plain sight reads as a bug
@@ -118,11 +122,13 @@ private:
     Vector3 intruderPos{0, 0, 0};
     std::vector<ActiveAnomaly> active;
     std::vector<std::string> exhausted;
+    std::string lastSpawnChannel = "office";
 
     json PickTier() const;
     float NightScale(const char* key, float dflt) const;    // per-night array by (night-1)
     int NightUnlock(const char* key, int dflt) const;       // scalar gate
     bool TargetWatched(const json& d, Office& office) const;
+    bool Undetectable(const json& d, Office& office) const; // ghost-anomaly guard
     void SpawnOffice(Office& office);
     void SpawnExterior(Office& office, VisitorSystem& vs);
     void SpawnVisitorCorruption(VisitorSystem& vs);

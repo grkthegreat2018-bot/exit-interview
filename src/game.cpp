@@ -1312,10 +1312,16 @@ void Game::UpdateCommon(float dt) {
 
     if (ad.ActiveCount() > anomsBefore) {
         deeds["anomaly_seen"] += ad.ActiveCount() - anomsBefore;
-        // "something changed" cue - a creak, a dip in the lights, a felt note
+        // "something changed" cue - a creak, a dip in the lights, a felt note.
+        // Steer by channel so a waiting-room spawn doesn't send the player
+        // hunting the office (phone calls announce themselves by ringing).
         audio.Play(AudioBank::Sfx::Creak, 0.6f);
         blackoutT = std::max(blackoutT, 0.07f);
-        Notify("Something about the room is different.");
+        const std::string& ch = ad.LastSpawnChannel();
+        if (ch == "exterior")      Notify("Something feels different past the door.");
+        else if (ch == "visitor")  Notify("Something about them is different.");
+        else if (ch == "intruder") Notify("Something got inside.");
+        else if (ch != "call")     Notify("Something about the room is different.");
         Tut("spawn", "Something changed. Office oddities go in the REPORT app - people and things outside go by PHONE.");
     }
     // night-1 tutorial triggers: teach the job as things happen

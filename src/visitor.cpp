@@ -104,10 +104,14 @@ HumanoidApp AppFromJson(const json& j) {
 }
 
 // LOD spheres: DrawSphere is 16x16 (~1.6k verts) - silly for eyes/buttons.
-// Keeping humanoid vertex count low also keeps the rlgl batch far from the
-// 32k overflow line where a mid-draw flush can corrupt frame state.
+// Three tiers: heads/caps get the most, mid-size parts (bun/ponytail knots,
+// jaw, ears - big enough to read as jagged lumps at 5x6) get the middle,
+// tiny bits stay cheap. Vertex count stays far under the 32k rlgl batch
+// line where a mid-draw flush corrupts frame state.
 static void Sph(Vector3 c, float r, Color col) {
-    DrawSphereEx(c, r, r > 0.08f ? 9 : 5, r > 0.08f ? 10 : 6, col);
+    if (r > 0.08f)       DrawSphereEx(c, r, 10, 12, col);
+    else if (r > 0.035f) DrawSphereEx(c, r, 7, 9, col);
+    else                 DrawSphereEx(c, r, 5, 6, col);
 }
 
 // eyes defer to the unlit pass: under the office's dim point-light shader a

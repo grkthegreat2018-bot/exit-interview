@@ -149,6 +149,16 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   soften unescorted releases early (`release_instab_mul`). A resolve also
   buys `resolve_calm_sec` of guaranteed quiet. `validate_content.py`
   audits every def for undetectable/unresolvable cases.
+- Runtime spawn legibility is guarded too: `AnomalyDirector::Undetectable`
+  refuses defs whose furni delta the player could never see - one live
+  anomaly per target (a second change hides inside the first), one live
+  flag per kind unless the def has its own visible mutation half, no
+  no-op mutations (pos_set to the same spot, tint it already wears), no
+  mutating hidden/missing furni. Every spawn logs `[anomaly] spawned
+  <id> kind=<k> channel=<c> target=<t>`, and the spawn cue steers by
+  `ad.LastSpawnChannel()`: exterior -> "past the door", visitor ->
+  "about them", intruder -> "got inside", phone calls announce
+  themselves by ringing (no generic cue).
 - Interview endings are LLM-judged: a Seated->Leaving edge with player
   lines submits the transcript as purpose `intervieweval`; the verdict
   lands in `ivEvals` and is consumed in PollLLM - match credits
