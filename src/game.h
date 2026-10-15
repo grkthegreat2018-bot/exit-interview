@@ -123,6 +123,8 @@ private:
     void Tut(const char* key, const std::string& msg);  // fire-once night-1 hint
     int tutStep = -1;               // night-0 scripted lesson plan (-1 = off)
     void UpdateTutorial(float dt);  // advances the orientation sequence
+    void UpdateThreats(float dt);   // window/door breach state machine
+    void UpdateAnomalyKinds(float dt);  // flag-driven per-frame kinds
     std::string tutTitle;           // active lesson card: header + body + focus
     std::string tutMsg;
     std::string tutFocus;           // what the card points at ("the door")

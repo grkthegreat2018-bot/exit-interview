@@ -1423,46 +1423,7 @@ void Game::UpdateCommon(float dt) {
             hd->rotY += ((bodyNear ? -100.f : 0.f) - hd->rotY) * std::min(1.f, dt * 5.f);
     }
 
-    // ---- animated anomaly kinds - flag-driven, run every frame ----
-    // a folded note slid under the door keeps creeping inward until it
-    // settles just inside the doorway (crew carry it out on resolve)
-    if (ad.HasKind("note_slid"))
-        if (Furni* n = office.Find("anom_note")) {
-            const float zt = -4.28f;
-            if (n->pos.z < zt) {
-                n->pos.z += (zt - n->pos.z) * std::min(1.f, dt * 0.55f);
-                if (n->pos.z > -4.5f && !noteSfx) {
-                    noteSfx = true;
-                    audio.Play(AudioBank::Sfx::TypeTick, 0.5f);   // paper whisper
-                }
-            }
-        }
-    // the visitor chair slowly turns; a crew that's reached it holds it still
-    if (ad.HasKind("spin_chair")) {
-        bool held = false;
-        for (auto& e : crew) if (e.phase >= 1)
-            for (auto& o : e.outcomes) if (o.kind == "spin_chair") held = true;
-        if (!held) if (Furni* c = office.Find("visitor_chair")) c->rotY += dt * 22.f;
-    }
-    // desk drawer open flag -> office.cpp slides a drawer out by drawerT;
-    // while the assigned crew works it they're physically pushing it back
-    office.drawerOpen = ad.HasKind("desk_drawer");
-    bool drawerWorked = false;
-    for (auto& e : crew) if (e.phase == 1)
-        for (auto& o : e.outcomes) if (o.kind == "desk_drawer") drawerWorked = true;
-    float drawerGoal = (office.drawerOpen && !drawerWorked) ? 1.f : 0.f;
-    office.drawerT += (drawerGoal - office.drawerT) *
-                      std::min(1.f, dt * (drawerWorked ? 1.1f : 4.f));
-    // scratching and whispering inside the waiting room walls
-    if (ad.HasKind("hall_writing")) {
-        hallWhisperT -= dt;
-        if (hallWhisperT <= 0.f) {
-            hallWhisperT = RandRange(2.0f, 5.0f);
-            audio.Play(RandRange(0.f, 1.f) < 0.6f ? AudioBank::Sfx::TypeTick
-                                                  : AudioBank::Sfx::Creak,
-                       RandRange(0.15f, 0.3f));
-        }
-    }
+    UpdateAnomalyKinds(dt);
 
     // what things with eyes / mutated NPCs should track
     office.eyeTarget = player.Eye();
@@ -1515,115 +1476,7 @@ void Game::UpdateCommon(float dt) {
         }
     }
 
-    // ----- breach: something outside finds a way in -----
-    // window: blinds open (or glass already broken) while a figure/banger is
-    //   at the window.
-    // door: the office door standing open with a figure/banger at it.
-    // crouched under the desk it can't find you; anywhere else is a kill.
-    const json nsc = Cfg()["instability"].value("night_scaling", json::object());
-    float breachUnlock = JF(nsc, "unlock_breach_night", 3.f);
-    bool windowThreat = night >= breachUnlock && (office.blindsOpen || office.windowBroken) &&
-        (vs.exteriorFigure == "figure_at_window" || (vs.bangerActive && vs.bangerAt == "window"));
-    // a door held open BY a work crew isn't the player's negligence - it
-    // won't push past uniforms. doorAnim mirrors doorOpen for crew too, so
-    // the whole door clause must yield while crewOpenedDoor is set.
-    bool doorAjar = (doorOpen || doorAnim > 0.45f || office.doorBroken) && !crewOpenedDoor;
-    bool doorThreat = night >= breachUnlock && doorAjar &&
-        (vs.exteriorFigure == "figure_at_door" || (vs.bangerActive && vs.bangerAt == "door"));
-    // a door banger kept waiting behind a SHUT door doesn't give up - it
-    // pounds the panel off its hinges, like the window glass. After that the
-    // doorway is permanently open until Facilities repairs it.
-    if (vs.bangerActive && vs.bangerAt == "door" && !doorAjar && !office.doorBroken) {
-        bangDoorT += dt;
-        if (bangDoorT > JF(Cfg()["instability"], "door_break_sec", 26.f)) {
-            bangDoorT = 0;
-            ad.DebugForceKind("broken_door", office, &vs);   // sets office.doorBroken
-            doorRattle = 1.f;
-            shake = std::max(shake, 0.5f);
-            Notify("A final slam - the office door hangs wrecked on its hinges.");
-            audio.Play(AudioBank::Sfx::Screech, 0.9f);
-            audio.Play(AudioBank::Sfx::Thump, 0.9f);
-            TraceLog(LOG_INFO, "[breach] door banger broke the door down");
-        }
-    } else bangDoorT = std::max(0.f, bangDoorT - dt * 2.f);
-    // a broken line of defence means almost no grace: shattered glass or an
-    // open door lets it come straight through instead of stalking the gap
-    float need = JF(Cfg()["instability"], "breach_sec", 8.f);
-    if (windowThreat && office.windowBroken) need *= 0.35f;
-    if (doorThreat) need *= 0.30f;
-    if (breachCooldown > 0) breachCooldown -= dt;
-    if (breachRush >= 0) {
-        // the rush crosses the room in well under a second - hide now or die
-        breachRush += dt * 1.6f;
-        shake = std::max(shake, 0.4f);
-        if (breachRush >= 1.f) {
-            breachRush = -1;
-            if (player.hiding) {
-                breachSearchT = JF(Cfg()["instability"], "breach_search_sec", 6.f);
-                audio.Play(AudioBank::Sfx::Heart, 0.9f);
-                TraceLog(LOG_INFO, "[breach] entered via %s - searching, player hidden",
-                         breachDoor ? "door" : "window");
-            } else if (VisitorShielded()) {
-                // it took the interviewee and left fed - the line held for you
-                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
-                deeds["breach_survived"]++;
-            } else {
-                deathTitle = breachDoor ? "IT CAME THROUGH THE DOOR"
-                                        : "IT CAME THROUGH THE GLASS";
-                Jumpscare(breachDoor ? "breach_door" : "breach");
-            }
-        }
-    } else if (breachSearchT > 0) {
-        breachSearchT -= dt;
-        if (!player.hiding) {           // stood up / left cover mid-search
-            breachSearchT = 0;
-            if (VisitorShielded()) {    // it grabbed the visitor instead
-                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
-                deeds["breach_survived"]++;
-            } else {
-                deathTitle = "IT FOUND YOU";
-                Jumpscare("breach");
-            }
-        } else if (breachSearchT <= 0) {
-            breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
-            deeds["breach_survived"]++;
-            Notify(breachDoor ? "It searched the room and left. Check the door."
-                              : "It searched the room and left. The window is broken - call Facilities.");
-            audio.Play(AudioBank::Sfx::Creak, 0.6f);
-            TraceLog(LOG_INFO, "[breach] search ended - survived via %s",
-                     breachDoor ? "door" : "window");
-        }
-    } else if ((windowThreat || doorThreat) && breachCooldown <= 0) {
-        breachT += dt;
-        if (!breachWarned && breachT > std::min(2.5f, need * 0.45f)) {
-            breachWarned = true;
-            Notify(doorThreat ? "It has noticed the open door."
-                              : "Something outside is watching the open blinds.");
-            audio.Play(AudioBank::Sfx::Thump, 0.4f);
-        }
-        if (breachT > need) {
-            breachT = 0; breachWarned = false;
-            breachRush = 0;
-            breachDoor = doorThreat;
-            bool fromBanger = vs.bangerActive &&
-                (vs.bangerAt == "window" || vs.bangerAt == "door");
-            breachFrom = fromBanger ? vs.bangerPos : vs.figurePos;
-            // it left its spot - remove the anomaly so the outside figure is
-            // gone too (and doesn't linger there after a successful dodge).
-            // The door figure also drives the banger state, so drop both
-            // kinds - whichever is active is the thing that just came in.
-            if (doorThreat) { ad.DropKind("banging_door"); ad.DropKind("figure_at_door"); }
-            else            { ad.DropKind("banging_window"); ad.DropKind("figure_at_window"); }
-            if (!doorThreat)
-                // ...and it left the glass in pieces: stays live until
-                // Facilities is called out to repair it
-                ad.DebugForceKind("broken_window", office, &vs);
-            audio.Play(AudioBank::Sfx::Stinger, 0.7f);
-        }
-    } else {
-        breachT = std::max(0.f, breachT - dt * 2.f);
-        breachWarned = false;
-    }
+    UpdateThreats(dt);
 
     // LLM remix spawn: director asked for one, submit the catalog prompt
     if (ad.remixPending && remixReq == -1) {
@@ -1751,6 +1604,163 @@ void Game::UpdateCommon(float dt) {
 // one can't break it. Scripted fires reuse the real anomaly defs, so the
 // channels it teaches are the real ones (REPORT app, PHONE > FACILITIES,
 // PHONE > SECURITY). The dice-driven scheduler is parked for the night.
+void Game::UpdateAnomalyKinds(float dt) {
+    // ---- animated anomaly kinds - flag-driven, run every frame ----
+    // a folded note slid under the door keeps creeping inward until it
+    // settles just inside the doorway (crew carry it out on resolve)
+    if (ad.HasKind("note_slid"))
+        if (Furni* n = office.Find("anom_note")) {
+            const float zt = -4.28f;
+            if (n->pos.z < zt) {
+                n->pos.z += (zt - n->pos.z) * std::min(1.f, dt * 0.55f);
+                if (n->pos.z > -4.5f && !noteSfx) {
+                    noteSfx = true;
+                    audio.Play(AudioBank::Sfx::TypeTick, 0.5f);   // paper whisper
+                }
+            }
+        }
+    // the visitor chair slowly turns; a crew that's reached it holds it still
+    if (ad.HasKind("spin_chair")) {
+        bool held = false;
+        for (auto& e : crew) if (e.phase >= 1)
+            for (auto& o : e.outcomes) if (o.kind == "spin_chair") held = true;
+        if (!held) if (Furni* c = office.Find("visitor_chair")) c->rotY += dt * 22.f;
+    }
+    // desk drawer open flag -> office.cpp slides a drawer out by drawerT;
+    // while the assigned crew works it they're physically pushing it back
+    office.drawerOpen = ad.HasKind("desk_drawer");
+    bool drawerWorked = false;
+    for (auto& e : crew) if (e.phase == 1)
+        for (auto& o : e.outcomes) if (o.kind == "desk_drawer") drawerWorked = true;
+    float drawerGoal = (office.drawerOpen && !drawerWorked) ? 1.f : 0.f;
+    office.drawerT += (drawerGoal - office.drawerT) *
+                      std::min(1.f, dt * (drawerWorked ? 1.1f : 4.f));
+    // scratching and whispering inside the waiting room walls
+    if (ad.HasKind("hall_writing")) {
+        hallWhisperT -= dt;
+        if (hallWhisperT <= 0.f) {
+            hallWhisperT = RandRange(2.0f, 5.0f);
+            audio.Play(RandRange(0.f, 1.f) < 0.6f ? AudioBank::Sfx::TypeTick
+                                                  : AudioBank::Sfx::Creak,
+                       RandRange(0.15f, 0.3f));
+        }
+    }
+}
+
+
+void Game::UpdateThreats(float dt) {
+    // ----- breach: something outside finds a way in -----
+    // window: blinds open (or glass already broken) while a figure/banger is
+    //   at the window.
+    // door: the office door standing open with a figure/banger at it.
+    // crouched under the desk it can't find you; anywhere else is a kill.
+    const json nsc = Cfg()["instability"].value("night_scaling", json::object());
+    float breachUnlock = JF(nsc, "unlock_breach_night", 3.f);
+    bool windowThreat = night >= breachUnlock && (office.blindsOpen || office.windowBroken) &&
+        (vs.exteriorFigure == "figure_at_window" || (vs.bangerActive && vs.bangerAt == "window"));
+    // a door held open BY a work crew isn't the player's negligence - it
+    // won't push past uniforms. doorAnim mirrors doorOpen for crew too, so
+    // the whole door clause must yield while crewOpenedDoor is set.
+    bool doorAjar = (doorOpen || doorAnim > 0.45f || office.doorBroken) && !crewOpenedDoor;
+    bool doorThreat = night >= breachUnlock && doorAjar &&
+        (vs.exteriorFigure == "figure_at_door" || (vs.bangerActive && vs.bangerAt == "door"));
+    // a door banger kept waiting behind a SHUT door doesn't give up - it
+    // pounds the panel off its hinges, like the window glass. After that the
+    // doorway is permanently open until Facilities repairs it.
+    if (vs.bangerActive && vs.bangerAt == "door" && !doorAjar && !office.doorBroken) {
+        bangDoorT += dt;
+        if (bangDoorT > JF(Cfg()["instability"], "door_break_sec", 26.f)) {
+            bangDoorT = 0;
+            ad.DebugForceKind("broken_door", office, &vs);   // sets office.doorBroken
+            doorRattle = 1.f;
+            shake = std::max(shake, 0.5f);
+            Notify("A final slam - the office door hangs wrecked on its hinges.");
+            audio.Play(AudioBank::Sfx::Screech, 0.9f);
+            audio.Play(AudioBank::Sfx::Thump, 0.9f);
+            TraceLog(LOG_INFO, "[breach] door banger broke the door down");
+        }
+    } else bangDoorT = std::max(0.f, bangDoorT - dt * 2.f);
+    // a broken line of defence means almost no grace: shattered glass or an
+    // open door lets it come straight through instead of stalking the gap
+    float need = JF(Cfg()["instability"], "breach_sec", 8.f);
+    if (windowThreat && office.windowBroken) need *= 0.35f;
+    if (doorThreat) need *= 0.30f;
+    if (breachCooldown > 0) breachCooldown -= dt;
+    if (breachRush >= 0) {
+        // the rush crosses the room in well under a second - hide now or die
+        breachRush += dt * 1.6f;
+        shake = std::max(shake, 0.4f);
+        if (breachRush >= 1.f) {
+            breachRush = -1;
+            if (player.hiding) {
+                breachSearchT = JF(Cfg()["instability"], "breach_search_sec", 6.f);
+                audio.Play(AudioBank::Sfx::Heart, 0.9f);
+                TraceLog(LOG_INFO, "[breach] entered via %s - searching, player hidden",
+                         breachDoor ? "door" : "window");
+            } else if (VisitorShielded()) {
+                // it took the interviewee and left fed - the line held for you
+                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+                deeds["breach_survived"]++;
+            } else {
+                deathTitle = breachDoor ? "IT CAME THROUGH THE DOOR"
+                                        : "IT CAME THROUGH THE GLASS";
+                Jumpscare(breachDoor ? "breach_door" : "breach");
+            }
+        }
+    } else if (breachSearchT > 0) {
+        breachSearchT -= dt;
+        if (!player.hiding) {           // stood up / left cover mid-search
+            breachSearchT = 0;
+            if (VisitorShielded()) {    // it grabbed the visitor instead
+                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+                deeds["breach_survived"]++;
+            } else {
+                deathTitle = "IT FOUND YOU";
+                Jumpscare("breach");
+            }
+        } else if (breachSearchT <= 0) {
+            breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+            deeds["breach_survived"]++;
+            Notify(breachDoor ? "It searched the room and left. Check the door."
+                              : "It searched the room and left. The window is broken - call Facilities.");
+            audio.Play(AudioBank::Sfx::Creak, 0.6f);
+            TraceLog(LOG_INFO, "[breach] search ended - survived via %s",
+                     breachDoor ? "door" : "window");
+        }
+    } else if ((windowThreat || doorThreat) && breachCooldown <= 0) {
+        breachT += dt;
+        if (!breachWarned && breachT > std::min(2.5f, need * 0.45f)) {
+            breachWarned = true;
+            Notify(doorThreat ? "It has noticed the open door."
+                              : "Something outside is watching the open blinds.");
+            audio.Play(AudioBank::Sfx::Thump, 0.4f);
+        }
+        if (breachT > need) {
+            breachT = 0; breachWarned = false;
+            breachRush = 0;
+            breachDoor = doorThreat;
+            bool fromBanger = vs.bangerActive &&
+                (vs.bangerAt == "window" || vs.bangerAt == "door");
+            breachFrom = fromBanger ? vs.bangerPos : vs.figurePos;
+            // it left its spot - remove the anomaly so the outside figure is
+            // gone too (and doesn't linger there after a successful dodge).
+            // The door figure also drives the banger state, so drop both
+            // kinds - whichever is active is the thing that just came in.
+            if (doorThreat) { ad.DropKind("banging_door"); ad.DropKind("figure_at_door"); }
+            else            { ad.DropKind("banging_window"); ad.DropKind("figure_at_window"); }
+            if (!doorThreat)
+                // ...and it left the glass in pieces: stays live until
+                // Facilities is called out to repair it
+                ad.DebugForceKind("broken_window", office, &vs);
+            audio.Play(AudioBank::Sfx::Stinger, 0.7f);
+        }
+    } else {
+        breachT = std::max(0.f, breachT - dt * 2.f);
+        breachWarned = false;
+    }
+}
+
+
 void Game::UpdateTutorial(float dt) {
     // copy lives in dialogs.json "tutorial" for tuning; literals keep a
     // stripped assets dir playable

@@ -4,6 +4,15 @@ A horror / spot-the-anomaly game. You are the night-shift exit-interview officer
 Meridian Logistics. Employees come to your office for their exit interviews.
 Not everything that sits down across your desk is an employee.
 
+## Get the game
+
+- **Steam** — buying it there is a *donation*: it funds the work, and nothing
+  is locked behind it.
+- **Here** — this repo always carries the latest source; build it yourself for
+  free and you get the newest build before Steam does.
+- Windows and Linux packages build automatically on every push via CI
+  (`.github/workflows/build.yml`) — grab them from the Actions artifacts.
+
 ## Build (Windows, MSVC + vcpkg)
 
 ```
