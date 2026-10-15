@@ -133,6 +133,30 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   `remix` = LLM-designed anomaly validated against `assets/anomaly_parts.json`
   (spawnable types/anchors/limits/mutation whitelist) via `ad.ApplyRemixJson`.
   Both are gated by `ad.freeform` (the SCRIPTED ONLY toggle).
+- `defs["generic"]` — data-driven mutation defs (`"effects"` whitelist):
+  `slide/float/turn/swap/scale/tint/spawn` roll a random valid room target
+  each spawn (min move distance, free-space AABB vs furniture, room-bounds
+  clamp, per-item watched-guard so nothing teleports under the player's
+  stare). Set-pieces `gen_rearrange` (3-item position rotation, n3+,
+  w 0.4) and `gen_gravity` (up to 4 props hang mid-air, n4+, w 0.25)
+  restore through `ActiveAnomaly.extraSnaps` — shared by BeginResolve,
+  ApplyResolveFx and the crew push-back. `genMuts`/`genSpawn` serialize
+  the rolled world deltas so save/load re-applies the exact same state
+  (before this, a mid-shift save silently dropped generic anomalies).
+- The jumpscare is a 3D event, not an overlay: `Game::Jumpscare` stores
+  `scareFrom` (intruder pos / breach entry / visitor seat / fallback
+  forward), the update case locks the camera onto it, and
+  `DrawShadowFigure` (scare arg: skull drops to lens height, eyes widen,
+  mouth opens, both arms reach) rushes to 0.34m while `fx.scare` +
+  a closing red vignette tighten the frame. A second Screech+Heart
+  layer lands at ~60% (`scareHit2`).
+- Night-0 tutorial runs `tutTitle/tutMsg/tutFocus` lesson cards (soft
+  dim + focus chip, persist until the step advances; the closing card
+  self-expires on `tutMsgT`) instead of toasts. `tutorial_skip` setting
+  + the pre-shift confirm modal live in menus.cpp.
+- Ambience: `ambT` rolls a distant settle sfx (creak/pipes/mains/far
+  step) every 24-70s; 42 `motes` drift in the desk light (unlit warm
+  specks, twinkle by index phase - visible even during lights-out).
 - Night 0 is a scripted orientation, not a rolled shift: `night==0` parks
   the spawn scheduler entirely (`ad.Update` early-outs) and clamps
   instability at 85 so TERMINATED can't fire. `Game::UpdateTutorial`
@@ -360,16 +384,23 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   SimDown in player.h), `interact`, `door` (invite if a visitor waits),
   `invite` (auto-invites the moment one reaches the door), `sit`, `sitv`
   (sit + guarantee SitVisitor), `swap`, `stand`, `visitor` (CallNextEarly),
-  `blinds`, `lights`, `say:<line>` (SayToVisitor),
-  `app:report|book|records|phone|paper|building|none`, `anom:<id>`,
-  `kind:<kind>`, `call`, `intruder`, `notify:<text>`, `quit`,
+  `promote` (ambient -> scheduled promotion), `vleave` (wrap the seated
+  interview), `vgo` (visitor straight to Gone), `blinds`, `lights`,
+  `say:<line>` (SayToVisitor), `end` (END INTERVIEW equivalent),
+  `app:report|book|records|phone|paper|none`, `anom:<id>` (office defs AND
+  generic defs), `kind:<kind>`, `call`, `intruder`, `vanom` (corrupt the
+  seated visitor), `threat:door|window` (force a banger there),
+  `notify:<text>`, `drop:<kind-or-id>` / `clear` (yank live anomalies),
   `god` (deaths log a [god] line instead of firing - also clamps
   instability under 100), `calm`/`heat` (park/resume the spawn
-  scheduler), `instab:<n>` (nudge the meter), `hide`/`unhide` (duck
-  under the desk, survives breach searches), `report:<text>`,
-  `fac:<text>`, `sec:intruder|anomaly`. Runs off dbgT, so it is
-  frame-exact under EI_RECDUMP. Env twins: `EI_GOD`, `EI_CALM`,
-  `EI_INSTAB=<n>`.
+  scheduler), `freeze:<sec>` (hold instability), `instab:<n>`,
+  `hour:<n>` (jump the shift clock), `night:<n>` (restart at night n),
+  `hide`/`unhide` (duck under the desk, survives breach searches),
+  `save` / `load` (write + reload the shift save - exercises the
+  full serialize/deserialize round-trip including generic genMuts),
+  `report:<text>`, `fac:<text>`, `sec:intruder|anomaly`, `quit`.
+  Runs off dbgT, so it is frame-exact under EI_RECDUMP. Env twins:
+  `EI_GOD`, `EI_CALM`, `EI_INSTAB=<n>`.
 - `EI_CLEAN=1` — clean-recording mode: flycam/path mechanics still work but
   all debug chrome is hidden (F3 overlay, osTex thumbnail, HUD clock,
   prompts, toasts, crosshair, ring indicator). Implied by `EI_PATH` (NOT
