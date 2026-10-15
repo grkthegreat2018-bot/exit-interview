@@ -739,6 +739,12 @@ void Game::DoInteract() {
         }
         else { audio.Play(AudioBank::Sfx::Click, 0.4f); Notify("Just a dial tone."); }
     } else if (it == "note") {
+        // already reading it -> E folds the slip away again
+        if (loreCardT > 0.f) {
+            loreCardT = 0.f;
+            audio.Play(AudioBank::Sfx::TypeTick, 0.4f);
+            return;
+        }
         // a slid-in / misplaced note is readable - lore slips delivered by
         // whoever keeps writing them. Unseen slips surface first so the set
         // completes across replays; re-reads show the text but don't re-score
@@ -1590,10 +1596,6 @@ void Game::UpdateCommon(float dt) {
         else Die("TERMINATED", JS(A.dialogs["endings"], "consumed"));
     }
 
-    for (auto& n : notes) n.second -= dt;
-    std::erase_if(notes, [](auto& n) { return n.second <= 0; });
-    if (loreCardT > 0.f) loreCardT -= dt;
-
     PollLLM();
 }
 
@@ -2149,6 +2151,14 @@ void Game::Run() {
             audio.UpdateMenuMusic();
         }
 
+        // HUD pop-up lifetimes tick in EVERY mode - pausing with a toast or
+        // the lore card up used to freeze their timers while the draw kept
+        // running (the translucent pause dim let them bleed through), so a
+        // note could sit on the screen forever until unpaused
+        for (auto& n : notes) n.second -= dt;
+        std::erase_if(notes, [](auto& n) { return n.second <= 0; });
+        if (loreCardT > 0.f) loreCardT -= dt;
+
         switch (mode) {
             case Mode::Title: {
                 // back at the menu the theme unbends - same stream, normal pitch,
@@ -2358,9 +2368,10 @@ void Game::Run() {
                                Rectangle{10, 10, 312, 192}, Vector2{0, 0}, 0, WHITE);
             if (mode == Mode::SitVisitor && vs.VisitorSeated())
                 dlg.Draw(A, W, H, vs.Cur().Name(), vs.transcript);
-            if (phone.answered && mode != Mode::Pause)
+            if (phone.answered && mode != Mode::Pause && mode != Mode::Jumpscare)
                 phoneDlg.Draw(A, W, H, JS(phone.ev, "persona"), phone.transcript);
-            else if (phone.ringing && mode != Mode::Pause && pathKeys.empty() && !cleanDebug) {
+            else if (phone.ringing && mode != Mode::Pause && mode != Mode::Jumpscare &&
+                     pathKeys.empty() && !cleanDebug) {
                 // visible ring indicator so it can't be mistaken for ambience
                 std::string ring = "the desk phone is ringing";
                 Vector2 rts = MeasureTextEx(A.fontSmall, ring.c_str(), 21, 1);
@@ -2370,7 +2381,11 @@ void Game::Run() {
                            Color{235, 200, 110, (unsigned char)(blink * 255)});
             }
 
-            if (pathKeys.empty() && !cleanDebug)
+            // no HUD pop-ups over the pause menu or mid-jumpscare: DrawPause's
+            // translucent dim lets bright cards bleed through, and their
+            // timers now tick every frame so they still expire behind it
+            bool hudOk = mode != Mode::Pause && mode != Mode::Jumpscare;
+            if (hudOk && pathKeys.empty() && !cleanDebug)
                 HUD::DrawClock(A, W, gameHour, debug, ad.Instability(), night);
             if (mode == Mode::Roam && player.hiding && !cleanDebug) {
                 // the taped note under the desk - reads itself to you while
@@ -2397,6 +2412,7 @@ void Game::Run() {
                            Color{140, 175, 190, 200});
             }
             if (pathKeys.empty() && !cleanDebug) {
+            if (hudOk) {
             HUD::DrawPrompt(A, W, H, mode == Mode::Roam ?
                 (phone.answered ? "[ESC] hang up" : interactLabel) :
                 (mode == Mode::SitComputer
@@ -2438,9 +2454,10 @@ void Game::Run() {
                     ty += 24.f;
                 }
             }
+            }
             if (debug) DrawDebugOverlay();
             }
-            if (loreCardT > 0.f && !loreText.empty() && !cleanDebug) {
+            if (hudOk && loreCardT > 0.f && !loreText.empty() && !cleanDebug) {
                 // the slid-in note, read: same parchment card the hide note uses
                 std::vector<std::string> wl = WrapText(A.font, loreText, 21, 1, W * 0.44f);
                 float nw = 0;
@@ -2454,7 +2471,7 @@ void Game::Run() {
                 for (int i = 0; i < (int)wl.size(); i++)
                     DrawTextEx(A.font, wl[i].c_str(), {card.x + 24.f, card.y + 16.f + i * 28.f},
                                21, 1, Color{44, 36, 28, 255});
-                const char* hint = "a note, slid in from somewhere";
+                const char* hint = "a note, slid in from somewhere   -   [E] put it down";
                 Vector2 hs = MeasureTextEx(A.fontSmall, hint, 18, 1);
                 DrawTextEx(A.fontSmall, hint, {W / 2.f - hs.x / 2, card.y + card.height - 22.f},
                            18, 1, Color{120, 100, 72, 255});
