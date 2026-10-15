@@ -2187,6 +2187,19 @@ void Game::Run() {
                 // back at the menu the theme unbends - same stream, normal pitch,
                 // position preserved (never restarted by the death screen)
                 audio.SetMenuMusicPitch(1.f);
+                // the boot release check often fires before wifi associates -
+                // while the menu sits open, keep retrying a failed/Idle check
+                // on a slow timer so a late connection still finds updates
+                if (updater) {
+                    updRetryT += dt;
+                    if (updRetryT >= 20.f && updRetries < 15) {
+                        if (updater->GetState() == GameUpdater::State::Idle) {
+                            updater->Retry();
+                            updRetries++;
+                        }
+                        updRetryT = 0.f;
+                    }
+                }
                 // dev hook: EI_MENU=<tab 0..3> pins the settings page open (shots)
                 if (const char* e = DevEnv("EI_MENU")) {
                     menuPage = 1;

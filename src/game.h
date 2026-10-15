@@ -275,6 +275,8 @@ private:
     std::string repoUrl;
     int updOpen = 0;          // update popup visible on title
     bool updSeen = false;     // auto-opened once already this boot
+    float updRetryT = 0.f;    // title-screen recheck timer
+    int updRetries = 0;       // bounded re-checks while offline/wifi late
     float updScroll = 0.f;    // changelog scroll offset
     void DrawUpdatePopup();
 

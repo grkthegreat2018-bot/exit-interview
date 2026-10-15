@@ -175,6 +175,14 @@ public:
 
     void Stop() { stop = true; }
 
+    // the boot check fires once before wifi may even be associated - while
+    // the title is up and the last check fell back to Idle, poke it again.
+    // No-op while a check is in flight or a real result already exists
+    void Retry() {
+        if (repo.empty() || stop || GetState() != State::Idle) return;
+        std::thread([this] { CheckThread(); }).detach();
+    }
+
     State GetState() const { return st.load(); }
     float Progress() const { return progress.load(); }
     std::string NewVersion() const { std::lock_guard<std::mutex> l(m); return newVer; }
@@ -336,6 +344,7 @@ private:
         if (!HttpGet("api.github.com", "/repos/" + repo + "/releases/latest",
                      &body, "", nullptr, &stop) || stop) {
             st = State::Idle;    // silent: no release yet / offline / not a repo
+            TraceLog(LOG_INFO, "[update] release check failed (offline? no releases?) - will retry on title");
             return;
         }
         json j;
