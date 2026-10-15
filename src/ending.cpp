@@ -186,11 +186,34 @@ void Game::DrawDebugOverlay() const {
 }
 
 
+// god-mode aftermath: whatever just tried to kill gets spent, not re-armed.
+// Without this a suppressed jumpscare leaves its trigger live - the breach
+// re-fires a second later, then again, forever, drowning the test in deaths.
+void Game::ConsumeLethalThreat() {
+    breachRush = -1; breachSearchT = 0; breachT = 0; breachWarned = false;
+    breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f) * 0.5f;
+    ad.DropKind("figure_at_door"); ad.DropKind("figure_at_window");
+    ad.DropKind("banging_door");   ad.DropKind("banging_window");
+    ad.ApplyExteriorFlags(office, vs);
+    if (ad.IntruderActive()) ad.ClearIntruder(office);
+    // a lunged visitor burns its one attack - mark the exit handled so the
+    // hostile grace window can't just queue another vault
+    if (vs.Cur().lunge || vs.Cur().state == VState::Seated && vs.Cur().anomaly == "hostile") {
+        vs.CurMut().lunge = false;
+        vs.CurMut().escorted = true;
+        vs.CurMut().hostileT = 0;
+        vs.CurMut().hostileStarted = false;   // calms it - no more lunge cycles
+    }
+    shake = std::min(shake, 0.15f);
+}
+
+
 void Game::Jumpscare(const std::string& reason) {
     if (mode == Mode::Jumpscare || mode == Mode::Dead) return;
     if (godMode) {   // EI_GOD: log what would have killed the run and keep going
         TraceLog(LOG_WARNING, "[god] jumpscare suppressed: %s", reason.c_str());
         deathTitle.clear();
+        ConsumeLethalThreat();   // clear the trigger or it re-arms a kill every frame
         return;
     }
     mode = Mode::Jumpscare;

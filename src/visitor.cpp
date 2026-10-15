@@ -1012,7 +1012,9 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
                 InviteIn();
                 notify(cur.Name() + " sees the open door and comes in.");
             }
-            else if (cur.waitT > doorWaitSec) { // they let themselves in
+            // the door never self-invites while something heavy holds it shut -
+            // they just wait outside until maintenance clears it
+            else if (cur.waitT > doorWaitSec && !doorBlocked) { // they let themselves in
                 InviteIn();
             }
             break;
@@ -1090,10 +1092,23 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
                 if (cur.detainWalk) cur.animT += dt * 5.5f;
             } else {
                 auto& path = office.paths["visitor_out"];
-                WalkAlong(cur, path, dt, walkSpeed * 1.3f);
-                if (cur.wp >= (int)path.size()) {
-                    cur.state = VState::Gone;
-                    notify("They left.");
+                // a blocked doorway traps them inside - they reach for the
+                // handle, find it won't give, and stand there waiting it out
+                bool atBlockedDoor = doorBlocked && cur.wp < (int)path.size() &&
+                                     path[cur.wp].y < -4.4f;
+                if (atBlockedDoor) {
+                    cur.yaw = 180.f;   // facing -z: the door
+                    cur.animT += dt;
+                    if (!cur.sawBlockedDoor) {
+                        cur.sawBlockedDoor = true;
+                        notify(cur.Name() + " tries the door - it won't budge. Something's holding it shut.");
+                    }
+                } else {
+                    WalkAlong(cur, path, dt, walkSpeed * 1.3f);
+                    if (cur.wp >= (int)path.size()) {
+                        cur.state = VState::Gone;
+                        notify("They left.");
+                    }
                 }
             }
             break;

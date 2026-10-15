@@ -93,6 +93,7 @@ public:
     std::string RemixPrompt() const;        // catalog description for the LLM
     bool ApplyRemixJson(const std::string& text, Office& office, std::string& why);
     void TriggerEffect(const json& fx, Office& office, VisitorSystem& vs);  // call outcome fx
+    void ApplyExteriorFlags(Office& office, VisitorSystem& vs);  // re-derive room flags (god-mode drops, tests)
 
     float Instability() const { return instab; }
     void AddInstability(float v);
@@ -144,5 +145,4 @@ private:
     void SpawnExterior(Office& office, VisitorSystem& vs);
     void SpawnVisitorCorruption(VisitorSystem& vs);
     void SpawnIntruder(Office& office);
-    void ApplyExteriorFlags(Office& office, VisitorSystem& vs);
 };

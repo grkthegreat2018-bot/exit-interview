@@ -201,15 +201,15 @@ void Game::DrawTitle() {
     std::string warn = (llm.ProviderName() == "groq" && apiKey.empty())
         ? "no API key set - replies run on the offline stub (SETTINGS > LLM)"
         : "LLM: " + llm.ProviderName() + (hardcodedOnly ? "   |   anomalies: scripted" : "   |   anomalies: scripted + LLM");
-    ts = MeasureTextEx(A.fontSmall, warn.c_str(), 17, 1);
-    DrawTextEx(A.fontSmall, warn.c_str(), {W / 2.f - ts.x / 2, H - 64.f}, 17, 1,
-               apiKey.empty() && llm.ProviderName() == "groq" ? Color{200, 140, 90, 255} : Color{90, 100, 110, 255});
+    ts = MeasureTextEx(A.fontSmall, warn.c_str(), 18, 1);
+    DrawTextEx(A.fontSmall, warn.c_str(), {W / 2.f - ts.x / 2, H - 64.f}, 18, 1,
+               apiKey.empty() && llm.ProviderName() == "groq" ? Color{210, 150, 95, 255} : Color{120, 132, 145, 255});
     std::string ctrl = std::string(KeyName(keys.fwd)) + "/" + KeyName(keys.left) + "/" +
         KeyName(keys.back) + "/" + KeyName(keys.right) + " move - " + KeyName(keys.sprint) +
         " sprint - " + KeyName(keys.crouch) + " crouch - " + KeyName(keys.interact) +
         " interact - " + KeyName(keys.swap) + " monitor - ESC pause";
-    ts = MeasureTextEx(A.fontSmall, ctrl.c_str(), 17, 1);
-    DrawTextEx(A.fontSmall, ctrl.c_str(), {W / 2.f - ts.x / 2, H - 32.f}, 17, 1, Color{110, 115, 125, 255});
+    ts = MeasureTextEx(A.fontSmall, ctrl.c_str(), 18, 1);
+    DrawTextEx(A.fontSmall, ctrl.c_str(), {W / 2.f - ts.x / 2, H - 32.f}, 18, 1, Color{135, 142, 155, 255});
 
     // credits block, bottom-right: makers + AI disclaimer + year/version +
     // repo link
@@ -219,12 +219,12 @@ void Game::DrawTitle() {
         std::string disc = JS(Cfg()["game"], "ai_disclaimer",
                               "made with AI assistance");
         std::string repo = JS(Cfg()["game"], "repo_url", "github.com/grkthegreat2018-bot/exit-interview");
-        ts = MeasureTextEx(A.fontSmall, cr.c_str(), 16, 1);
-        DrawTextEx(A.fontSmall, cr.c_str(), {W - ts.x - 16.f, H - 78.f}, 16, 1, Color{120, 125, 135, 255});
-        ts = MeasureTextEx(A.fontSmall, disc.c_str(), 16, 1);
-        DrawTextEx(A.fontSmall, disc.c_str(), {W - ts.x - 16.f, H - 58.f}, 16, 1, Color{105, 110, 118, 255});
-        ts = MeasureTextEx(A.fontSmall, repo.c_str(), 16, 1);
-        DrawTextEx(A.fontSmall, repo.c_str(), {W - ts.x - 16.f, H - 38.f}, 16, 1, Color{96, 140, 180, 255});
+        ts = MeasureTextEx(A.fontSmall, cr.c_str(), 18, 1);
+        DrawTextEx(A.fontSmall, cr.c_str(), {W - ts.x - 16.f, H - 82.f}, 18, 1, Color{145, 152, 165, 255});
+        ts = MeasureTextEx(A.fontSmall, disc.c_str(), 18, 1);
+        DrawTextEx(A.fontSmall, disc.c_str(), {W - ts.x - 16.f, H - 60.f}, 18, 1, Color{130, 136, 146, 255});
+        ts = MeasureTextEx(A.fontSmall, repo.c_str(), 18, 1);
+        DrawTextEx(A.fontSmall, repo.c_str(), {W - ts.x - 16.f, H - 38.f}, 18, 1, Color{110, 160, 205, 255});
     }
     // updater: auto-open once when a release appears; a corner pill re-opens
     // it after LATER; the popup itself is modal over the whole menu
@@ -462,6 +462,7 @@ void Game::DrawSettings() {
         if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {
             sens = JF(Cfg()["game"], "mouse_sensitivity", 0.12f);
             volMaster = volSfx = volAmb = volMusic = volDrone = 1.f;
+            musicEnabled = true;
             keys = KeyMap{};
             llmEndpoint.clear(); llmModel.clear(); apiKey.clear();
             hardcodedOnly = true; ad.freeform = false;
@@ -493,6 +494,15 @@ void Game::DrawSettings() {
             "The instability drone that swells as anomalies gather. The dread meter."); next();
         SliderRow(r, "MUSIC VOLUME", volMusic, 0.f, 2.f,
             "The menu themes - music on the title and ending screens."); next();
+        if (MenuBtn(r, musicEnabled ? "MUSIC: ON" : "MUSIC: OFF",
+            "Kill or restore the title/dead-screen music entirely - the now-playing chip goes with it.")) {
+            musicEnabled = !musicEnabled;
+            ApplyAudio();   // stops the stream (and chip) instantly when toggling off
+            SaveSettings();
+        }
+        next();
+        // sliders apply live while dragging - audible feedback beats "release to hear"
+        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) ApplyAudio();
         if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) { ApplyAudio(); SaveSettings(); }
     }
     else if (settingsTab == 2) {

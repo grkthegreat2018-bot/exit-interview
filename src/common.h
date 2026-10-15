@@ -183,9 +183,30 @@ inline void TryPaste(std::string& s, int maxLen, bool stripWhitespace = false) {
         }
     }
 }
-// Fold UTF-8 punctuation + Latin-1 accents down to the ASCII range our
-// fonts actually carry. LLM replies love U+2019 apostrophes, curly quotes
-// and em-dashes - raw, those render as holes. Applied to anything shown.
+// The baked font set covers ASCII + Latin-1 + the usual typographic set -
+// pass those through verbatim (real curly quotes beat folded ones) and fold
+// anything wider to its nearest ASCII cousin so nothing renders as a hole.
+inline bool GlyphCovered(uint32_t cp) {
+    if (cp <= 0xFF) return true;
+    switch (cp) {
+        case 0x2013: case 0x2014: case 0x2018: case 0x2019: case 0x201C:
+        case 0x201D: case 0x2026: case 0x2022: case 0x00B7: case 0x2190:
+        case 0x2191: case 0x2192: case 0x2193: case 0x2605: case 0x2713:
+        case 0x2717: return true;
+        default: return false;
+    }
+}
+inline std::string CodepointToUtf8(uint32_t cp) {
+    char buf[5] = {0}; int n = 0;
+    if (cp < 0x80) { buf[0] = (char)cp; n = 1; }
+    else if (cp < 0x800) {
+        buf[0] = (char)(0xC0 | (cp >> 6)); buf[1] = (char)(0x80 | (cp & 0x3F)); n = 2;
+    } else {
+        buf[0] = (char)(0xE0 | (cp >> 12)); buf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        buf[2] = (char)(0x80 | (cp & 0x3F)); n = 3;
+    }
+    return std::string(buf, n);
+}
 inline std::string SanitizeText(const std::string& in) {
     std::string out;
     out.reserve(in.size());
@@ -209,6 +230,7 @@ inline std::string SanitizeText(const std::string& in) {
             cp = (cp << 6) | (cc & 0x3F);
         }
         if (!ok) { i++; continue; }
+        if (GlyphCovered(cp)) { out += in.substr(i, len); i += len; continue; }
         i += len;
         switch (cp) {
             case 0x2018: case 0x2019: case 0x02BC: case 0x2032: out += '\''; break;

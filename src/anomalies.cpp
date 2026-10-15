@@ -404,7 +404,7 @@ void AnomalyDirector::ClearIntruder(Office& office) {
 }
 
 void AnomalyDirector::ApplyExteriorFlags(Office& office, VisitorSystem& vs) {
-    bool figW = false, figD = false, dark = false, empty = false, broken = false;
+    bool figW = false, figD = false, dark = false, empty = false, broken = false, doorBrk = false;
     int wview = 0; bool hl = false, bangD = false, bangW = false, mutW = false;
     // pending entries still hold their world effect until the crew arrives
     for (auto* list : {&active, &pending}) for (auto& a : *list) {
@@ -419,8 +419,10 @@ void AnomalyDirector::ApplyExteriorFlags(Office& office, VisitorSystem& vs) {
         if (a.kind == "banging_window") bangW = true;
         if (a.kind == "mutated_waiting") mutW = true;
         if (a.kind == "broken_window") broken = true;
+        if (a.kind == "broken_door") doorBrk = true;
     }
     office.windowBroken = broken;
+    office.doorBroken = doorBrk;
     office.waitingLightsOut = dark;
     office.windowView = wview;
     office.hallLong = hl;
@@ -474,6 +476,7 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
             if (!found) o.workPos = {0, 0, -7.8f};
         }
         else if (o.kind == "hall_long") o.workPos = {5.6f, 0, -9.2f};
+        else if (o.kind == "broken_door") o.workPos = {0.f, 0.f, -6.2f};   // re-hang it from the hall side
         else if (o.kind == "phone_call") {
             if (Furni* f = office.Find("desk_phone")) o.workPos = f->pos;
         }
@@ -481,6 +484,9 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
             for (auto& f : office.items)
                 if (f.room == "office" && f.ft == FT::CeilingLight) { o.workPos = f.pos; break; }
         }
+        // the shelf is holding the door shut - crew can't get through it, so
+        // they shove it back from the waiting-room side of the doorway
+        if (o.id == "bookshelf_door") o.workPos = {0.f, 0.f, -6.35f};
         if (channel == "intruder") {
             if (deferFx) intruderT = 1e9f;      // strike paused while security is en route
             else intruderActive = false;

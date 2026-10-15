@@ -334,8 +334,6 @@ LLMClient::Result LLMClient::StubRespond(const Request& r) {
             {"Security notified of concerns", "security_called"},
             {"Facilities ticket reconciled", "facilities_called"},
             {"Front desk acknowledgment received", "frontdesk_called"},
-            {"Window blinds checked/secured", "blinds_used"},
-            {"Lighting verified functional", "lights_used"},
             {"Early visitor pull logged", "visitor_early"}};
         json forms = json::array();
         int n = 6;
@@ -349,7 +347,7 @@ LLMClient::Result LLMClient::StubRespond(const Request& r) {
             for (int k = 0; k < cCount; k++)
                 items.push_back({{"t", clerical[RandInt(0, 8)]}, {"verify", "none"}});
             for (int k = 0; k < vCount; k++) {
-                auto& v = verified[RandInt(0, 9)];
+                auto& v = verified[RandInt(0, 7)];
                 items.push_back({{"t", v.first}, {"verify", v.second}});
             }
             // shuffle so verified lines aren't always last

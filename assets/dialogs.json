@@ -322,11 +322,11 @@
     },
     {
      "t": "Window blinds checked",
-     "verify": "blinds_used"
+     "verify": "none"
     },
     {
      "t": "Lighting verified functional",
-     "verify": "lights_used"
+     "verify": "none"
     },
     {
      "t": "Keys returned to hook",
@@ -450,7 +450,7 @@
    "items": [
     {
      "t": "Window integrity visually confirmed",
-     "verify": "blinds_used"
+     "verify": "none"
     },
     {
      "t": "Office door verified closed 02:00",

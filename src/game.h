@@ -58,6 +58,8 @@ private:
     float blackoutT = 0;            // active light-failure timer
     bool doorOpen = false;          // player peeked the office door open
     float doorAnim = 0;             // 0 closed .. 1 swung open (hinge)
+    bool doorBlocked = false;       // bookshelf_door live - nobody passes
+    float bangDoorT = 0.f;          // door banger pounding progress -> broken_door
     float doorRattle = 0;           // transient door-panel shudder from banger hits
     bool manualLightsOff = false;   // player flicked the light switch off
     bool godMode = false;           // EI_GOD / seq 'god' - deaths log instead of firing
@@ -170,6 +172,7 @@ private:
     int settingsTab = 0;                // 0 general, 1 audio, 2 controls, 3 llm
     int rebinding = -1;                 // keybind row waiting for a keypress (-1 none)
     float volMaster = 1.f, volSfx = 1.f, volAmb = 1.f, volMusic = 1.f, volDrone = 1.f;
+    bool musicEnabled = true;               // AUDIO tab toggle; off = no menu music, no chip
     std::string tip;                    // hovered widget's tooltip, set during draw
     void DrawSettings();
     bool MenuBtn(Rectangle r, const char* label, const char* tooltip = nullptr);
@@ -301,6 +304,7 @@ private:
 
     void Jumpscare(const std::string& reason);
     void Die(const std::string& title, const std::string& body);
+    void ConsumeLethalThreat();         // god mode: drop whatever just tried to kill
     void Save();
     bool Load();
     void LoadSettings();

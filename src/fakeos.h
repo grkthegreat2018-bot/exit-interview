@@ -7,7 +7,7 @@ class Assets;
 // Fake OS rendered when seated + focused on the monitor. Mouse-driven.
 class FakeOS {
 public:
-    enum class App { None, Appointments, Records, Report, Phone, Paperwork, Building };
+    enum class App { None, Appointments, Records, Report, Phone, Paperwork };
 
     std::function<std::vector<std::string>()> getAppointments;   // display lines
     std::function<std::vector<std::string>()> getRecord;         // current visitor record
@@ -21,12 +21,6 @@ public:
     // verify-key -> "" if the deed was actually done, else a short requirement
     // label ("finish an interview") - blocks ticking boxes you didn't do
     std::function<std::string(const std::string&)> canCertify;
-
-    // building panel: remote toggles for the office light circuit + blinds
-    std::function<bool()> getLightsOn;
-    std::function<bool()> getBlindsOpen;
-    std::function<void()> onToggleLights;
-    std::function<void()> onToggleBlinds;
 
     // virtual mouse: set each frame to the player's aim point in OS pixel space;
     // input (clicks/typing) only processed when interactive == true

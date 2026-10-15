@@ -62,6 +62,7 @@ struct Visitor {
     bool detainWalk = false;        // crew is marching them out right now
     int slotIdx = -1;               // schedule slot this visitor came from
     float doorSeenT = 999.f;        // seconds since the office door was last seen open
+    bool sawBlockedDoor = false;    // already reacted to the shelf blocking the door
 
     bool Active() const { return state != VState::None && state != VState::Gone; }
     std::string Name() const { return person ? JS(*person, "name") : std::string("?"); }
@@ -100,6 +101,7 @@ public:
     int night = 1;              // set by Game - gates lethal schedule slots
     bool doorOpen = false;      // set by Game each frame - semantic door state
                                 // (rotY is also watched so a desync can't lie)
+    bool doorBlocked = false;   // bookshelf_door live: nobody passes, nobody opens
     const json& Schedule() const { return schedule; }
     const json* RosterFind(const std::string& id) const;
     const json& Roster() const { return data["roster"]; }

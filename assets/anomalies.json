@@ -2853,6 +2853,24 @@
    "breach_only": true
   },
   {
+   "id": "x_broken_door",
+   "kind": "broken_door",
+   "desc": "The office door was smashed off its hinges and will not close",
+   "keywords": [
+    "door",
+    "broken",
+    "smashed",
+    "hinges",
+    "wrecked",
+    "splintered",
+    "open",
+    "damage",
+    "broke"
+   ],
+   "instab": 1.2,
+   "breach_only": true
+  },
+  {
    "id": "wr_writing",
    "kind": "hall_writing",
    "desc": "Scratching/whispering sounds are coming from the waiting room walls",

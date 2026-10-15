@@ -93,24 +93,6 @@ bool Game::Init() {
         os.SetStatus("FILED - instability held " + std::to_string((int)s) + "s");
         audio.Play(AudioBank::Sfx::TypeTick, 0.5f);
     };
-    // BUILDING app: remote toggles on the same circuits - saves the hike
-    // across the room, still counts as "using" them for form verification
-    os.getLightsOn = [this] { return !manualLightsOff; };
-    os.getBlindsOpen = [this] { return office.blindsOpen; };
-    os.onToggleLights = [this] {
-        manualLightsOff = !manualLightsOff;
-        deeds["lights_used"]++;
-        audio.Play(AudioBank::Sfx::Click, 0.5f);
-        os.SetStatus(ad.HasKind("lights_office")
-                     ? "circuit fault - the lights aren't listening"
-                     : (manualLightsOff ? "office lights OFF" : "office lights ON"));
-    };
-    os.onToggleBlinds = [this] {
-        office.blindsOpen = !office.blindsOpen;
-        deeds["blinds_used"]++;
-        audio.Play(AudioBank::Sfx::Click, 0.5f);
-        os.SetStatus(office.blindsOpen ? "blinds raised" : "blinds drawn");
-    };
     dlg.onSay = [this](const std::string& t) { SayToVisitor(t); };
     phoneDlg.onSay = [this](const std::string& t) { PhoneSay(t); };
     phoneDlg.onEnd = [this] { HangUpPhone(); };
@@ -315,7 +297,9 @@ bool Game::Init() {
         //   app:report|book|records|phone|paper|building|none
         //   anom:<id>  kind:<kind>  call  intruder  notify:<text>  quit
         //   god (deaths log, never fire)  calm/heat (scheduler park/resume)
-        //   instab:<n>  hide  unhide   envs: EI_GOD EI_CALM EI_INSTAB
+        //   instab:<n>  hour:<n>  night:<n>  drop:<kind|id>  clear
+        //   threat:door|window  vleave  vgo  freeze:<sec>  hide  unhide
+        //   envs: EI_GOD EI_CALM EI_INSTAB EI_HOUR EI_DOOR EI_BLINDS EI_HIDE
         std::string spec = sq;
         for (size_t p = 0, q; p <= spec.size(); p = (q == std::string::npos ? spec.size() + 1 : q + 1)) {
             q = spec.find(';', p);
@@ -345,7 +329,6 @@ bool Game::Init() {
         if (!std::strcmp(ap, "book"))      os.app = FakeOS::App::Appointments;
         else if (!std::strcmp(ap, "phone"))    os.app = FakeOS::App::Phone;
         else if (!std::strcmp(ap, "paper"))    os.app = FakeOS::App::Paperwork;
-        else if (!std::strcmp(ap, "building")) os.app = FakeOS::App::Building;
     }
     if (std::getenv("EI_CALL") && A.anomalies.contains("call_events"))  // dev hook: phone rings now
         ad.DebugCallEvent(A.anomalies["call_events"][0]);
@@ -597,7 +580,8 @@ void Game::ExecSeq(const std::string& c) {
     } else if (op == "interact") {
         DoInteract();
     } else if (op == "door") {
-        if (vs.VisitorAtDoor()) { doorOpen = false; vs.InviteIn(); audio.Play(AudioBank::Sfx::Whoosh, 0.7f); }
+        if (doorBlocked) { audio.Play(AudioBank::Sfx::Thump, 0.6f); Notify("Blocked - it won't move."); }
+        else if (vs.VisitorAtDoor()) { doorOpen = false; vs.InviteIn(); audio.Play(AudioBank::Sfx::Whoosh, 0.7f); }
         else { doorOpen = !doorOpen; audio.Play(AudioBank::Sfx::Creak, 0.55f); }
     } else if (op == "invite") {
         seqInvite = true;   // fires the moment the visitor reaches the door
@@ -635,8 +619,7 @@ void Game::ExecSeq(const std::string& c) {
                  a == "book" || a == "appt" ? FakeOS::App::Appointments :
                  a == "records" ? FakeOS::App::Records :
                  a == "phone" ? FakeOS::App::Phone :
-                 a == "paper" ? FakeOS::App::Paperwork :
-                 a == "building" ? FakeOS::App::Building : FakeOS::App::None;
+                 a == "paper" ? FakeOS::App::Paperwork : FakeOS::App::None;
     } else if (op == "report") {   // exercises the real REPORT pipeline end to end
         SubmitReport(arg.empty() ? "the mug moved" : arg);
     } else if (op == "fac") {      // PHONE > FACILITIES, verbatim description
@@ -667,6 +650,30 @@ void Game::ExecSeq(const std::string& c) {
         player.crouching = player.forcedCrouch = true;
     } else if (op == "unhide") {
         player.forcedCrouch = player.crouching = player.hiding = false;
+    } else if (op == "hour") {       // hour:<n> jumps the shift clock (18..30)
+        gameHour = std::clamp(arg.empty() ? 20.f : (float)atof(arg.c_str()), 18.f, 30.f);
+    } else if (op == "night") {      // night:<n> restarts the shift at night n
+        night = std::max(0, arg.empty() ? 1 : atoi(arg.c_str()));
+        NewShift(false);
+    } else if (op == "drop") {       // drop:<kind-or-id> clears live anomalies
+        ad.DropKind(arg); ad.DropId(arg);
+        ad.ApplyExteriorFlags(office, vs);
+        if (arg == "intruder") ad.ClearIntruder(office);
+    } else if (op == "clear") {      // drop every active anomaly, keep pending crew
+        std::vector<std::string> ids;
+        for (auto& a : ad.Active()) ids.push_back(a.id);
+        for (auto& i : ids) ad.DropId(i);
+        ad.ApplyExteriorFlags(office, vs);
+        ad.ClearIntruder(office);
+        TraceLog(LOG_INFO, "[dev] cleared %d live anomalies", (int)ids.size());
+    } else if (op == "threat") {     // threat:door|window forces a banger there
+        ad.DebugForceKind(arg == "window" ? "banging_window" : "banging_door", office, &vs);
+    } else if (op == "vleave") {     // the seated visitor wraps up right now
+        if (vs.VisitorSeated()) { vs.CurMut().seatT = vs.softLen + 1.f; }
+    } else if (op == "vgo") {        // force the active visitor straight to Gone
+        if (vs.HasActiveVisitor()) vs.CurMut().state = VState::Gone;
+    } else if (op == "freeze") {     // freeze:<sec> holds instability (paperwork fx)
+        ad.FreezeInstability(arg.empty() ? 30.f : (float)atof(arg.c_str()));
     } else if (op == "notify") {
         Notify(arg);
     } else if (op == "quit") {
@@ -731,7 +738,13 @@ void Game::DoInteract() {
         }
         audio.Play(AudioBank::Sfx::TypeTick, 0.5f);
     } else if (it == "door") {
-        if (vs.VisitorAtDoor()) {
+        if (doorBlocked) {
+            audio.Play(AudioBank::Sfx::Thump, 0.6f);
+            Notify("You shove the door. It barely gives - something heavy is holding it shut.");
+        } else if (office.doorBroken) {
+            audio.Play(AudioBank::Sfx::Creak, 0.5f);
+            Notify("The door hangs off its hinges. It won't close until it's repaired.");
+        } else if (vs.VisitorAtDoor()) {
             doorOpen = false;                     // open anim is driven by the walk-through
             vs.InviteIn();
             audio.Play(AudioBank::Sfx::Whoosh, 0.7f);
@@ -1031,7 +1044,9 @@ void Game::UpdateRoam(float dt) {
     // while hiding, the only thing to name is the desk wall in your face -
     // skip the chip so it doesn't fight the taped-note card
     if (interactLabel.empty() && lookF && !player.hiding) interactLabel = PrettyName(lookF->id);
-    if (IsKeyPressed(keys.interact)) DoInteract();
+    // on a live phone call, E must type into the call transcript - not also
+    // re-trigger the phone interact under the crosshair (silent-phone ding)
+    if (IsKeyPressed(keys.interact) && !phone.answered) DoInteract();
     // ESC hangs up first - pause only when not holding the handset
     if (IsKeyPressed(KEY_ESCAPE)) {
         if (phone.answered) HangUpPhone();
@@ -1191,6 +1206,9 @@ void Game::UpdateCommon(float dt) {
         Notify("Every name on the book is accounted for. The building lets you go.");
         audio.Play(AudioBank::Sfx::Whoosh, 0.4f);
     }
+    // bookshelf_door wedges the doorway shut - nobody opens it, nobody passes
+    doorBlocked = ad.IdLive("bookshelf_door");
+    vs.doorBlocked = doorBlocked;
     vs.doorOpen = doorOpen;   // semantic door truth - visitors watch it every
                               // frame alongside the live panel angle
     vs.Update(dt, gameHour, office,
@@ -1485,9 +1503,25 @@ void Game::UpdateCommon(float dt) {
     // a door held open BY a work crew isn't the player's negligence - it
     // won't push past uniforms. doorAnim mirrors doorOpen for crew too, so
     // the whole door clause must yield while crewOpenedDoor is set.
-    bool doorAjar = (doorOpen || doorAnim > 0.45f) && !crewOpenedDoor;
+    bool doorAjar = (doorOpen || doorAnim > 0.45f || office.doorBroken) && !crewOpenedDoor;
     bool doorThreat = night >= breachUnlock && doorAjar &&
         (vs.exteriorFigure == "figure_at_door" || (vs.bangerActive && vs.bangerAt == "door"));
+    // a door banger kept waiting behind a SHUT door doesn't give up - it
+    // pounds the panel off its hinges, like the window glass. After that the
+    // doorway is permanently open until Facilities repairs it.
+    if (vs.bangerActive && vs.bangerAt == "door" && !doorAjar && !office.doorBroken) {
+        bangDoorT += dt;
+        if (bangDoorT > JF(Cfg()["instability"], "door_break_sec", 26.f)) {
+            bangDoorT = 0;
+            ad.DebugForceKind("broken_door", office, &vs);   // sets office.doorBroken
+            doorRattle = 1.f;
+            shake = std::max(shake, 0.5f);
+            Notify("A final slam - the office door hangs wrecked on its hinges.");
+            audio.Play(AudioBank::Sfx::Screech, 0.9f);
+            audio.Play(AudioBank::Sfx::Thump, 0.9f);
+            TraceLog(LOG_INFO, "[breach] door banger broke the door down");
+        }
+    } else bangDoorT = std::max(0.f, bangDoorT - dt * 2.f);
     // a broken line of defence means almost no grace: shattered glass or an
     // open door lets it come straight through instead of stalking the gap
     float need = JF(Cfg()["instability"], "breach_sec", 8.f);
@@ -1944,7 +1978,8 @@ void Game::Run() {
                          (int)themes.size(), night);
             }
             bool menuCtx = (mode == Mode::Title || mode == Mode::Dead || mode == Mode::Win);
-            if (menuCtx && !audio.MenuPlaying() && !themes.empty()) {
+            if (!musicEnabled && audio.MenuPlaying()) audio.StopMenuMusic();
+            if (menuCtx && musicEnabled && !audio.MenuPlaying() && !themes.empty()) {
                 audio.StartMenuMusic(themes[themeIdx % themes.size()].c_str());
                 themeIdx = (themeIdx + 1) % (int)themes.size();
             }
@@ -2084,8 +2119,13 @@ void Game::Run() {
             if (tgt > doorAnim)      doorAnim = std::min(tgt, doorAnim + 2.6f * dt);
             else if (tgt < doorAnim) doorAnim = std::max(tgt, doorAnim - 3.2f * dt);
             float e = doorAnim * doorAnim * (3.f - 2.f * doorAnim);   // smoothstep
-            d->rotY = -78.f * e - doorRattle * (0.6f + doorRattle) *
-                      std::sin((float)GetTime() * 55.f);   // swings inward; banger hits rattle it
+            if (office.doorBroken)
+                // torn off its hinges: the panel hangs sprung open at a
+                // crooked angle - it can no longer close, or be closed
+                d->rotY = -58.f + std::sin((float)GetTime() * 1.7f) * 0.8f;
+            else
+                d->rotY = -78.f * e - doorRattle * (0.6f + doorRattle) *
+                          std::sin((float)GetTime() * 55.f);   // swings inward; banger hits rattle it
             if (DevEnv("EI_DOORTRACE"))
                 TraceLog(LOG_INFO, "[door] anim=%.3f rotY=%.2f open=%d cross=%d vst=%d z=%.2f",
                          doorAnim, d->rotY, (int)doorOpen, (int)crossing,

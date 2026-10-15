@@ -226,6 +226,9 @@ void Game::DispatchCrew(std::vector<ResolveOutcome> outs, int men, bool guards, 
             e.boxPos = {e.workPos.x, lead.snapshot.pos.y + lead.snapshot.size.y, e.workPos.z};
         } else {                                          // moved/changed -> toolkit repair
             e.prop = PROP_TOOLBOX; e.workLen = 3.4f;
+            // a two-ton shelf holding a door shut takes real effort to move -
+            // the delay IS the point: you're trapped with it for a while
+            if (lead.id == "bookshelf_door") e.workLen = 7.5f;
         }
     } else { e.prop = PROP_TOOLBOX; e.workLen = 2.8f; }     // empty room: unjam the door
 
@@ -278,7 +281,7 @@ void Game::UpdateCrew(float dt) {
     bool nearDoor = false;
     for (auto& e : crew) for (auto& m : e.men)
         if (std::fabs(m.pos.x) < 1.4f && std::fabs(m.pos.z + 5.75f) < 1.4f) nearDoor = true;
-    if (nearDoor && !doorOpen) { doorOpen = true; crewOpenedDoor = true; audio.Play(AudioBank::Sfx::Creak, 0.5f); }
+    if (nearDoor && !doorOpen && !doorBlocked) { doorOpen = true; crewOpenedDoor = true; audio.Play(AudioBank::Sfx::Creak, 0.5f); }
 
     auto walk = [](CrewMan& m, const std::vector<Vector2>& path, float dt, float sp) -> bool {
         if (m.delay > 0.f) { m.delay -= dt; return false; }

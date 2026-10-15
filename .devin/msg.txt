@@ -1,0 +1,32 @@
+﻿polish: readable fonts, music toggle, door mechanics, debug controls
+
+UI/OS legibility + coverage:
+- fonts now bake ASCII + Latin-1 + typographic glyphs (curly quotes,
+  dashes, ellipsis, arrows, check/cross) instead of ASCII-only - LLM
+  punctuation renders verbatim, wider input accepted (codepoint->utf8)
+- OS body text 19->20, paperwork 17->18, sticky/taskbar/icon labels +1-2,
+  brightest-pass on the dimmest greys; same bumps for the interview panel
+  and the menu credits/controls/disclaimer lines
+- BUILDING app removed (physical switch/cord remain); paperwork drops the
+  lights_used/blinds_used verify requirements from stock + LLM forms
+
+audio:
+- per-category sliders now apply live while dragging (they only fired on
+  release before - felt dead); MUSIC toggle persists music_enabled, stops
+  the stream and the now-playing chip when off
+
+door mechanics:
+- bookshelf_door now LOCKS the door: player can't open it, visitors can't
+  enter or leave (leavers stall at the doorway), crew can't swing it; the
+  unblock crew works from the hall side with a heavier 7.5s shove
+- door bangers left too long pound the door off its hinges: new
+  broken_door anomaly (Facilities repair), office.doorBroken flag, door
+  hangs sprung open, breach proceeds through the open doorway like the
+  window path
+- god mode: a suppressed jumpscare now consumes the trigger (breach
+  state, figures, bangers, intruder, lunge) instead of re-arming forever
+- phone: E while on a call types into the transcript instead of firing
+  world interact (no more dial-tone ding + phantom notification)
+
+debug: hour:<n>, night:<n>, drop:<kind|id>, clear, threat:door|window,
+vleave, vgo, freeze:<sec>

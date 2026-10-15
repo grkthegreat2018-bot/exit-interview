@@ -108,6 +108,7 @@ public:
     bool waitingLightsOut = false;
     int windowView = 0;         // anomaly: 0 normal, 1 waiting room upside down, 2 void
     bool windowBroken = false;  // breach aftermath: hole in the glass until repaired
+    bool doorBroken = false;    // breach aftermath: door off its hinges until repaired
     bool hallLong = false;      // anomaly: corridor past the hall door stretches forever
     Vector3 eyeTarget{0, 1.6f, 3};  // things with eyes look here (player eye pos)
     float clockHour = 18.f;     // wall clocks show the game hour (set per-frame)

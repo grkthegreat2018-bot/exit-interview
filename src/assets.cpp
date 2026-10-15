@@ -74,8 +74,29 @@ bool Assets::ReloadData() {
     return ok;
 }
 
+// Latin-1 + common typographic glyphs: curly quotes, dashes, ellipsis, bullet,
+// arrows, star, check/cross. LoadFontEx's default range bakes ASCII only -
+// anything wider renders as holes, so we hand it an explicit codepoint table.
+static const std::vector<int>& UIGlyphs() {
+    static std::vector<int> cps = [] {
+        std::vector<int> v;
+        for (int c = 32; c <= 255; c++) v.push_back(c);   // ASCII + Latin-1
+        for (int c : {0x2013, 0x2014, 0x2018, 0x2019, 0x201C, 0x201D,
+                      0x2026, 0x2022, 0x00B7, 0x2190, 0x2191, 0x2192, 0x2193,
+                      0x2605, 0x2713, 0x2717})
+            v.push_back(c);
+        return v;
+    }();
+    return cps;
+}
+
+static Font LoadUIFont(const std::string& path, int size) {
+    auto& g = UIGlyphs();
+    return LoadFontEx(path.c_str(), size, (int*)g.data(), (int)g.size());
+}
+
 static Font TryFont(const std::string& path, int size) {
-    if (FileExists(path.c_str())) return LoadFontEx(path.c_str(), size, nullptr, 0);
+    if (FileExists(path.c_str())) return LoadUIFont(path, size);
     return Font{0};
 }
 
@@ -93,9 +114,9 @@ void Assets::LoadFonts() {
     });
     for (auto& c : ui) {
         if (!FileExists(c.c_str())) continue;
-        font      = LoadFontEx(c.c_str(), 32, nullptr, 0);
-        fontSmall = LoadFontEx(c.c_str(), 20, nullptr, 0);
-        fontBig   = LoadFontEx(c.c_str(), 72, nullptr, 0);
+        font      = LoadUIFont(c.c_str(), 32);
+        fontSmall = LoadUIFont(c.c_str(), 20);
+        fontBig   = LoadUIFont(c.c_str(), 72);
         fontOk = true;
         break;
     }
@@ -115,7 +136,7 @@ void Assets::LoadFonts() {
     });
     for (auto& c : mono) {
         if (!FileExists(c.c_str())) continue;
-        fontMono = LoadFontEx(c.c_str(), 24, nullptr, 0);
+        fontMono = LoadUIFont(c.c_str(), 24);
         monoOk = true;
         break;
     }
