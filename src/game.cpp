@@ -1928,7 +1928,7 @@ void Game::DrawPlayerBody() {
                player.pos.z + std::cos(yr) * 0.02f};
     // close under the eye + slightly forward: torso fills center frame,
     // legs and feet extend to the bottom edge (Minecraft-style framing)
-    HumanoidApp fp = playerApp; fp.build = 0.82f; fp.height = 0.88f;
+    HumanoidApp fp = playerApp; fp.build = 0.92f; fp.height = 0.95f;
     // leaning the whole humanoid ~20 deg forward about its hip axis is
     // what sells "looking along my own body": the chest turns to face the
     // downward view and the legs/feet recede past it to the bottom edge
