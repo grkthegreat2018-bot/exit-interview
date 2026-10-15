@@ -291,10 +291,13 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
     Sph({hb.x + f.x * 0.012f, hb.y - 0.05f * a.height, hb.z + f.z * 0.012f},
         0.085f * a.height, a.skin);
     Sph(hb, 0.109f * a.height, a.skin);
-    // ears - cheap, but the side silhouette is instantly "person"
+    // ears - flush nubs hugging the skull. Bigger/further out and they
+    // poke past the head silhouette as pale spikes from behind
     for (int s = -1; s <= 1; s += 2)
-        Sph({hb.x + r.x * 0.099f * s * a.height, hb.y - 0.005f * a.height,
-             hb.z + r.z * 0.099f * s * a.height}, 0.021f * a.height, a.skin);
+        Sph({hb.x + r.x * 0.096f * s * a.height - f.x * 0.008f * a.height,
+             hb.y - 0.010f * a.height,
+             hb.z + r.z * 0.096f * s * a.height - f.z * 0.008f * a.height},
+            0.015f * a.height, a.skin);
     // nose tip - a small bridge + nub proud of the face so the profile
     // doesn't read as a featureless mask
     {
@@ -310,19 +313,30 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
     // different silhouette from across the room. Every cap sphere MUST be
     // bigger than the 0.109 head sphere - a smaller cap intersects the
     // skull and its exposed sliver reads as a floating ring halo
+    // the cap family: a raised cap sphere gives a real hairline across the
+    // brow, but a single offset sphere leaves skin slivers where its rim
+    // crosses the skull at the temples - a second sphere tucked low at the
+    // nape covers the back/sides like a real hairline does
+    auto capWithNape = [&](Vector3 capC, float capR) {
+        Sph(capC, capR, a.hair);
+        Sph({hb.x - f.x * 0.055f, hb.y - 0.020f * a.height, hb.z - f.z * 0.055f},
+            0.110f * a.height, a.hair);
+    };
     switch (a.hairStyle) {
         case 1:   // buzz: tight to the skull
-            Sph({hb.x, hb.y + 0.050f * a.height, hb.z - f.z * 0.012f}, 0.112f * a.height, a.hair);
+            Sph({hb.x, hb.y + 0.046f * a.height, hb.z - f.z * 0.010f}, 0.114f * a.height, a.hair);
             break;
         case 2:   // long: cap plus a fall of hair down the back
-            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
+            capWithNape({hb.x - f.x * 0.026f, hb.y + 0.036f * a.height, hb.z - f.z * 0.026f},
+                        0.118f * a.height);
             rlNormal3f(-f.x, -0.3f, -f.z);
             DrawCylinderEx({hb.x - f.x * 0.08f * a.height, hb.y + 0.01f, hb.z - f.z * 0.08f * a.height},
                            {hb.x - f.x * 0.10f * a.height, hb.y - 0.20f * a.height, hb.z - f.z * 0.10f * a.height},
                            0.055f * a.height, 0.045f * a.height, 6, a.hair);
             break;
         case 3:   // ponytail: cap, a tied knot, and a short tail
-            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
+            capWithNape({hb.x - f.x * 0.026f, hb.y + 0.036f * a.height, hb.z - f.z * 0.026f},
+                        0.118f * a.height);
             Sph({hb.x - f.x * 0.11f * a.height, hb.y + 0.075f * a.height, hb.z - f.z * 0.11f * a.height},
                 0.045f * a.height, a.hair);
             rlNormal3f(-f.x, -0.4f, -f.z);
@@ -331,7 +345,8 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                            0.038f * a.height, 0.030f * a.height, 6, a.hair);
             break;
         case 4:   // bun: cap plus a knot at the back of the skull
-            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
+            capWithNape({hb.x - f.x * 0.026f, hb.y + 0.036f * a.height, hb.z - f.z * 0.026f},
+                        0.118f * a.height);
             Sph({hb.x - f.x * 0.115f * a.height, hb.y + 0.05f * a.height, hb.z - f.z * 0.115f * a.height},
                 0.055f * a.height, a.hair);
             break;
@@ -341,20 +356,22 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
         case 6:   // bald: nothing
             break;
         default:  // cap - nudged off-axis so the fringe reads as a side part
-            Sph({hb.x - f.x * 0.030f + r.x * 0.012f * a.height,
-                 hb.y + 0.044f * a.height,
-                 hb.z - f.z * 0.030f + r.z * 0.012f * a.height}, 0.115f * a.height, a.hair);
+            capWithNape({hb.x - f.x * 0.024f + r.x * 0.010f * a.height,
+                         hb.y + 0.038f * a.height,
+                         hb.z - f.z * 0.024f + r.z * 0.010f * a.height}, 0.118f * a.height);
             break;
     }
     // face - sclera/iris/pupil are queued for the unlit pass (see
     // DrawHumanoidEyes); in the lit pass they'd read as dark holes
     if (a.eyes != "none") {
         Color ec = (a.eyes == "black") ? Color{5, 5, 8, 255} : Color{222, 220, 214, 255};
-        float er = (a.eyes == "black") ? 0.026f : 0.0185f;
+        // sclera ~12mm radius is anatomical; the old 0.0185*h read as two
+        // glowing golf balls up close (unlit pass never shades them)
+        float er = (a.eyes == "black") ? 0.018f : 0.0125f;
         for (int s = -1; s <= 1; s += 2) {
-            Vector3 ep{hb.x + f.x * 0.099f * a.height + r.x * 0.040f * s * a.height,
+            Vector3 ep{hb.x + f.x * 0.099f * a.height + r.x * 0.034f * s * a.height,
                        hb.y + 0.006f * a.height,
-                       hb.z + f.z * 0.099f * a.height + r.z * 0.040f * s * a.height};
+                       hb.z + f.z * 0.099f * a.height + r.z * 0.034f * s * a.height};
             EyeDraw e{ep, {}, {}, er * a.height, 0, 0, ec, {}, false};
             if (a.eyes == "normal") {
                 // iris+pupil slide toward `look` - eyes track whoever you're
@@ -374,12 +391,12 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                 e.ir = {ep.x + f.x * 0.016f * a.height + r.x * gx,
                         ep.y + gy,
                         ep.z + f.z * 0.016f * a.height + r.z * gx};
-                e.irR = 0.0102f * a.height;
+                e.irR = 0.0078f * a.height;
                 e.ic = a.eyeCol;
                 e.pu = {ep.x + f.x * 0.021f * a.height + r.x * gx * 1.4f,
                         ep.y + gy * 1.4f,
                         ep.z + f.z * 0.021f * a.height + r.z * gx * 1.4f};
-                e.puR = 0.0048f * a.height;
+                e.puR = 0.0036f * a.height;
             }
             g_eyeDraws.push_back(e);
         }
@@ -391,9 +408,9 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                       (unsigned char)std::max(0, (int)a.skin.b - 18), 255};
             for (int s = -1; s <= 1; s += 2) {
                 rlPushMatrix();
-                rlTranslatef(hb.x + f.x * 0.114f * a.height + r.x * 0.040f * s * a.height,
-                             hb.y + 0.020f * a.height,
-                             hb.z + f.z * 0.114f * a.height + r.z * 0.040f * s * a.height);
+                rlTranslatef(hb.x + f.x * 0.108f * a.height + r.x * 0.034f * s * a.height,
+                             hb.y + 0.018f * a.height,
+                             hb.z + f.z * 0.108f * a.height + r.z * 0.034f * s * a.height);
                 rlRotatef(yawDeg, 0, 1, 0);
                 DrawCubeV({0, 0, 0}, {0.030f * a.height, 0.009f * a.height, 0.008f}, lid);
                 rlPopMatrix();
@@ -411,9 +428,9 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
         // bowling ball; thin hair-colored bars give the face structure
         if (a.eyes != "black") {
             for (int s = -1; s <= 1; s += 2) {
-                Vector3 bp{hb.x + f.x * 0.096f * a.height + r.x * 0.040f * s * a.height,
+                Vector3 bp{hb.x + f.x * 0.096f * a.height + r.x * 0.034f * s * a.height,
                            hb.y + 0.038f * a.height,
-                           hb.z + f.z * 0.096f * a.height + r.z * 0.040f * s * a.height};
+                           hb.z + f.z * 0.096f * a.height + r.z * 0.034f * s * a.height};
                 rlPushMatrix();
                 rlTranslatef(bp.x, bp.y, bp.z);
                 rlRotatef(yawDeg, 0, 1, 0);
@@ -431,13 +448,13 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
             rlRotatef(yawDeg, 0, 1, 0);
             Color gc = a.glassesCol;
             for (int s = -1; s <= 1; s += 2) {
-                float lx = s * 0.040f * hh;                        // lens centre
+                float lx = s * 0.034f * hh;                        // lens centre
                 DrawCubeV({lx, 0.031f * hh, 0}, {0.064f * hh, 0.007f * hh, 0.007f}, gc);   // top rim
                 DrawCubeV({lx, -0.031f * hh, 0}, {0.064f * hh, 0.007f * hh, 0.007f}, gc);  // bottom rim
                 DrawCubeV({lx + s * 0.032f * hh, 0, 0}, {0.007f * hh, 0.062f * hh, 0.007f}, gc); // outer
                 DrawCubeV({lx - s * 0.032f * hh, 0, 0}, {0.007f * hh, 0.062f * hh, 0.007f}, gc); // inner
                 // temple arm: outer rim back toward the ear
-                DrawCubeV({lx + s * 0.040f * hh, 0.002f, -0.052f * hh},
+                DrawCubeV({lx + s * 0.038f * hh, 0.002f, -0.052f * hh},
                           {0.006f * hh, 0.006f * hh, 0.104f * hh}, gc);
             }
             DrawCubeV({0, 0.012f * hh, 0}, {0.026f * hh, 0.006f * hh, 0.006f}, gc);        // bridge
