@@ -514,6 +514,7 @@ void Game::NewShift(bool fromSave) {
     os.Reset(); dlg.Reset(); phoneDlg.Reset();
     phone = PhoneEvt{};
     notes.clear(); ending.clear(); deathTitle.clear();
+    tutTitle.clear(); tutMsg.clear(); tutFocus.clear(); tutMsgT = 0;
     scareT = 0; sitT = 0; lean = unseatT = 0;
     shake = 0; blackoutT = 0; doorOpen = false; doorAnim = 0; intruderSeen = false; manualLightsOff = false;
     camRoll = 0; settleDip = 0; lastBobSin = 0; wasMoving = false; cam.up = {0.f, 1.f, 0.f};
@@ -1662,6 +1663,35 @@ void Game::UpdateCommon(float dt) {
         }
     } else heartT = 0;
 
+    // the building settles around you - sparse distant one-shots at low
+    // volume. Seasoning, never signal: nothing to report here.
+    ambT -= dt;
+    if (ambT <= 0.f) {
+        ambT = RandRange(24.f, 70.f);
+        float v = RandRange(0.08f, 0.22f);
+        switch (RandInt(0, 3)) {
+            case 0: audio.Play(AudioBank::Sfx::Creak, v); break;         // joists flexing
+            case 1: audio.Play(AudioBank::Sfx::Thump, v * 0.85f); break; // pipes, far off
+            case 2: audio.Play(AudioBank::Sfx::Buzz, v * 0.7f); break;   // mains hum
+            default: audio.Play(AudioBank::Sfx::Step, v); break;         // someone, somewhere
+        }
+    }
+
+    // dust motes over the desk: slow drift + gentle sin sway, wrapped in a
+    // box so the count never decays. Seeded lazily on first update.
+    if (motes.empty()) {
+        for (int i = 0; i < 42; i++)
+            motes.push_back({RandRange(-1.4f, 1.4f), RandRange(0.75f, 2.1f),
+                             RandRange(0.6f, 3.4f)});
+    }
+    for (auto& m : motes) {
+        float ph = m.x * 3.1f + m.z * 1.7f;
+        m.y += dt * (0.022f + 0.016f * std::sin((float)GetTime() * 0.4f + ph));
+        m.x += dt * 0.014f * std::sin((float)GetTime() * 0.31f + ph * 2.f);
+        if (m.y > 2.15f) m.y = 0.75f;                                   // rise & wrap
+        if (m.x < -1.5f) m.x = 1.5f; else if (m.x > 1.5f) m.x = -1.5f;
+    }
+
     // light flicker: ambient instability only shimmers - it must never kill
     // visibility or impersonate a reportable anomaly. Sustained darkness is
     // reserved for the lights_office ANOMALY / manual switch, and even then
@@ -1728,36 +1758,44 @@ void Game::UpdateTutorial(float dt) {
         std::string s = A.dialogs.contains("tutorial") ? JS(A.dialogs["tutorial"], k) : "";
         return s.empty() ? std::string(fb) : s;
     };
-    auto say = [&](const std::string& m, float secs) {
-        Notify(m);
-        notes.back().second = secs;
+    // lesson cards persist on-screen until the step advances - no expiry mid-
+    // lesson. The last card expires so orientation doesn't hang a sign forever.
+    auto say = [&](const char* t, const std::string& m, const char* focus,
+                   float secs = 0.f) {
+        tutTitle = t; tutMsg = m; tutFocus = focus;
+        tutMsgT = secs;                      // 0 = lives until the step moves
+        audio.Play(AudioBank::Sfx::TypeTick, 0.35f);
     };
-    (void)dt;
+    if (tutMsgT > 0.f) { tutMsgT -= dt; if (tutMsgT <= 0.f) tutMsg.clear(); }
     switch (tutStep) {
         case 0:   // cold open - the book is the job
-            say(line("welcome", "ORIENTATION SHIFT. Two appointments are on the book tonight. When someone knocks, let them in."),
-                11.f);
-            audio.Play(AudioBank::Sfx::TypeTick, 0.4f);
+            say("WELCOME TO MERIDIAN",
+                line("welcome", "Two appointments are on the book tonight. When someone knocks, let them in."),
+                "the appointment book");
             tutStep = 1;
             break;
         case 1:   // first appointment reaches the door
             if (vs.VisitorAtDoor() || vs.VisitorSeated() ||
                 vs.Cur().state == VState::ToChair) {
-                say(line("door", "Someone's at the door. Open it and they'll see themselves in."), 9.f);
+                say("VISITOR AT THE DOOR",
+                    line("door", "Someone's at the door. Open it and they'll see themselves in."),
+                    "the office door");
                 tutStep = 2;
             }
             break;
         case 2:   // seated - run the interview
             if (vs.VisitorSeated()) {
-                say(line("sit", "Sit at your desk and ask them something. The RECORD app on the terminal has their file."),
-                    10.f);
+                say("RUN THE INTERVIEW",
+                    line("sit", "Sit at your desk and ask them something. The RECORD app on the terminal has their file."),
+                    "your desk");
                 tutStep = 3;
             }
             break;
         case 3:   // engaged - now end it properly
             if (askedCur) {
-                say(line("wrap", "That's an interview. When you're satisfied, END INTERVIEW - or just tell them they can go."),
-                    10.f);
+                say("WRAP IT UP",
+                    line("wrap", "That's an interview. When you're satisfied, END INTERVIEW - or just tell them they can go."),
+                    "the visitor");
                 tutStep = 4;
             } else if (!vs.HasActiveVisitor()) {
                 tutStep = 4;   // they left anyway - the warning teaches the rest
@@ -1766,8 +1804,9 @@ void Game::UpdateTutorial(float dt) {
         case 4:   // alone again - the room misbehaves
             if (!vs.HasActiveVisitor()) {
                 ad.DebugForceOffice("mug_moved", office);
-                say(line("report", "While you weren't watching, something moved on your desk. File a REPORT at the terminal - describe what changed."),
-                    12.f);
+                say("SOMETHING MOVED",
+                    line("report", "While you weren't watching, something moved on your desk. File a REPORT at the terminal - describe what changed."),
+                    "the REPORT app");
                 tutStep = 5;
             }
             break;
@@ -1775,30 +1814,34 @@ void Game::UpdateTutorial(float dt) {
                   // keeps a mid-lesson save/load from deadlocking the script
             if (deeds["report_filed"] > 0 || !ad.IdLive("mug_moved")) {
                 ad.DebugForceKind("lights_out", office, &vs);
-                say(line("facilities", "Confirmed - crew on the way. Now the waiting room lights just died. Look through the door, then PHONE > FACILITIES."),
-                    12.f);
+                say("BUILDING PROBLEM",
+                    line("facilities", "Confirmed - crew on the way. Now the waiting room lights just died. Look through the door, then PHONE > FACILITIES."),
+                    "the PHONE app");
                 tutStep = 6;
             }
             break;
         case 6:   // fixed - the next booking is wrong on purpose
             if (!ad.HasKind("lights_out")) {
                 vs.CallNextEarly(office);
-                say(line("security", "Handled. One more appointment is coming - check their file against what they tell you. If it doesn't match: PHONE > SECURITY > INTRUDER."),
-                    12.f);
+                say("CHECK THE STORY",
+                    line("security", "Handled. One more appointment is coming - check their file against what they tell you. If it doesn't match: PHONE > SECURITY > INTRUDER."),
+                    "PERSONNEL record");
                 tutStep = 7;
             }
             break;
         case 7:   // the wrong appointment takes a seat
             if (vs.VisitorSeated()) {
-                say(line("record", "Sit. Interview them like anyone else - but read their file in RECORD. If the story and the paperwork disagree, they are not your appointment."),
-                    12.f);
+                say("THEY DON'T MATCH",
+                    line("record", "Sit. Interview them like anyone else - but read their file in RECORD. If the story and the paperwork disagree, they are not your appointment."),
+                    "the visitor");
                 tutStep = 8;
             }
             break;
         case 8:   // however it ended, the book decides when the night does
             if (!vs.HasActiveVisitor()) {
-                say(line("done", "That's the whole job: clear the book, keep the room honest, last to 6 AM. An empty book clocks you out early."),
-                    12.f);
+                say("THAT'S THE JOB",
+                    line("done", "That's the whole job: clear the book, keep the room honest, last to 6 AM. An empty book clocks you out early."),
+                    "", 18.f);
                 tutStep = 9;
             }
             break;
@@ -1915,9 +1958,23 @@ void Game::DrawWorld() {
             float yaw = std::atan2(d.x - p.x, d.z - p.z) * RAD2DEG;
             Office::DrawShadowFigure(p, yaw, 1.18f);
         }
+        if (mode == Mode::Jumpscare) {    // the killer, inches from the lens
+            float s = std::min(1.f, scareT / 1.35f);
+            Vector3 e = player.Eye();
+            float yaw = std::atan2(e.x - scareFig.x, e.z - scareFig.z) * RAD2DEG;
+            Office::DrawShadowFigure({scareFig.x, 0.f, scareFig.z},
+                                     yaw, 1.02f + s * 0.12f, s, s);
+        }
         DrawMonitorPoly();            // OS screen: real world-space quad, unlit
         office.DrawEyes();            // anomaly eyes: unlit pale domes, never blacked out
         DrawHumanoidEyes();           // queued humanoid eyes - unlit, readable
+        // dust motes: faint warm specks drifting in the lamp/monitor glow -
+        // unlit so they still read during lights-out, twinkling per-mote
+        for (size_t i = 0; i < motes.size(); i++) {
+            float tw = 0.55f + 0.45f * std::sin((float)GetTime() * 1.7f + (float)i * 1.3f);
+            DrawCube(motes[i], 0.0055f, 0.0055f, 0.0055f,
+                     Color{255, 236, 200, (unsigned char)(70 * tw)});
+        }
         office.DrawGlass();           // translucent - must be last in 3D pass
         if (DevEnv("EI_DIAG")) {  // leftover transform here corrupts whole batch
             static double bdNext = 0;
@@ -1963,6 +2020,13 @@ void Game::DrawWorld() {
         Vector3 e = player.Eye();
         float yaw = std::atan2(e.x - ip.x, e.z - ip.z) * RAD2DEG;
         Office::DrawShadowFigure(ip, yaw, 1.08f);
+    }
+    if (mode == Mode::Jumpscare) {
+        float s = std::min(1.f, scareT / 1.35f);
+        Vector3 e = player.Eye();
+        float yaw = std::atan2(e.x - scareFig.x, e.z - scareFig.z) * RAD2DEG;
+        Office::DrawShadowFigure({scareFig.x, 0.f, scareFig.z},
+                                 yaw, 1.02f + s * 0.12f, s, s);
     }
     office.DrawGlass();
     EndMode3D();
@@ -2142,11 +2206,36 @@ void Game::Run() {
                     else { mode = pauseReturn; if (pauseReturn == Mode::Roam) DisableCursor(); }
                 }
                 break;
-            case Mode::Jumpscare:
+            case Mode::Jumpscare: {
                 scareT += dt;
-                shake = 1.1f;   // sustained while the scare plays out
+                float s = std::min(1.f, scareT / 1.35f);
+                // it closes in: the figure rushes from its standing point to a
+                // third of a meter off the player's eye while the camera is
+                // dragged to meet it - no input, nowhere else to look
+                Vector3 e = player.Eye();
+                Vector3 flat{scareFrom.x - e.x, 0.f, scareFrom.z - e.z};
+                float d = Vector3Length(flat);
+                Vector3 dir = d > 0.01f ? Vector3Scale(flat, 1.f / d)
+                                        : Vector3{std::sin(player.yaw * DEG2RAD), 0.f,
+                                                  std::cos(player.yaw * DEG2RAD)};
+                float lunge = 1.f - (1.f - s) * (1.f - s);        // ease-out rush
+                float dist = std::max(0.34f, d - (d - 0.34f) * lunge);
+                scareFig = {e.x + dir.x * dist, 0.f, e.z + dir.z * dist};
+                cam.position = e;
+                // look up into the face - head drops toward lens height as s->1
+                cam.target = {scareFig.x + dir.x * 0.12f * s, 1.50f + s * 0.12f,
+                              scareFig.z + dir.z * 0.12f * s};
+                cam.up = {0.f, 1.f, 0.f};
+                cam.fovy = fovBase - s * 9.f;                   // dolly punch
+                shake = 0.55f + s * 0.85f;
+                if (!scareHit2 && scareT > 0.62f) {             // contact hit
+                    scareHit2 = true;
+                    audio.Play(AudioBank::Sfx::Screech, 1.f);
+                    audio.Play(AudioBank::Sfx::Heart, 0.9f);
+                }
                 if (scareT > 1.35f) Die(deathTitle, ending);
                 break;
+            }
             case Mode::Dead:
             case Mode::Win:
                 if (IsKeyPressed(KEY_ENTER)) { mode = Mode::Title; weekJustDone = false; }
@@ -2183,6 +2272,9 @@ void Game::Run() {
             }
             os.mouse = vm;
             os.clockHour = gameHour;              // taskbar clock tracks shift time
+            // POST overlay only runs while the player actually sits at the
+            // terminal - not during the walk over
+            if (mode == Mode::SitComputer && os.bootT > 0.f) os.bootT -= dt;
             BeginTextureMode(osTex);
             ClearBackground(Color{14, 17, 22, 255});
             os.Draw(A, osTex.texture.width, osTex.texture.height);
@@ -2288,6 +2380,37 @@ void Game::Run() {
                        KeyName(keys.left) + "/" + KeyName(keys.right) + "] lean - [ESC] stand up")
                     : ""));
             HUD::DrawNotes(A, W, notes);
+            // night-0 lesson card: the world dims around it, the focus
+            // element is named in the header, and it stays up until the step
+            // advances - lessons don't evaporate mid-action
+            if (!tutMsg.empty() && mode != Mode::Jumpscare && mode != Mode::Dead) {
+                DrawRectangle(0, 0, W, H, Color{0, 0, 0, 46});          // soft dim
+                float tw = std::sin((float)GetTime() * 3.2f) * 0.5f + 0.5f;
+                std::vector<std::string> wl = WrapText(A.font, tutMsg, 19, 1, 560.f);
+                float cw = 640.f, ch = 44.f + wl.size() * 24.f + (tutFocus.empty() ? 0.f : 24.f);
+                Rectangle card{W / 2.f - cw / 2.f, H - ch - 66.f, cw, ch};
+                DrawRectangleRounded(card, 0.10f, 6, Color{12, 14, 20, 235});
+                DrawRectangleRoundedLinesEx(card, 0.10f, 6, 2.f,
+                    Color{120, 170, 210, (unsigned char)(150 + tw * 80)});
+                // header: ORIENTATION + the highlighted focus chip
+                float hx = card.x + 18.f;
+                DrawTextEx(A.fontSmall, "ORIENTATION", {hx, card.y + 12.f}, 16, 1,
+                           Color{150, 200, 235, 255});
+                hx += MeasureTextEx(A.fontSmall, "ORIENTATION", 16, 1).x + 12.f;
+                if (!tutFocus.empty()) {
+                    Vector2 fs = MeasureTextEx(A.fontSmall, tutFocus.c_str(), 15, 1);
+                    DrawRectangleRounded({hx - 5.f, card.y + 9.f, fs.x + 12.f, 22.f},
+                                         0.3f, 4, Color{60, 90, 120, 235});
+                    DrawTextEx(A.fontSmall, tutFocus.c_str(), {hx + 1.f, card.y + 12.f},
+                               15, 1, Color{235, 240, 250, 255});
+                }
+                float ty = card.y + 40.f;
+                for (auto& s : wl) {
+                    DrawTextEx(A.font, s.c_str(), {card.x + 18.f, ty}, 19, 1,
+                               Color{225, 230, 238, 255});
+                    ty += 24.f;
+                }
+            }
             if (debug) DrawDebugOverlay();
             }
             if (loreCardT > 0.f && !loreText.empty() && !cleanDebug) {
@@ -2312,14 +2435,22 @@ void Game::Run() {
             if (mode == Mode::Roam && !phone.answered && pathKeys.empty() && !cleanDebug)
                 HUD::DrawCrosshair(W, H);
             if (mode == Mode::Jumpscare) {
-                // face fills the screen
+                // the world does the talking now - this only tightens the
+                // blood-red vignette and swallows the edges as it lands
                 float s = scareT / 1.35f;
-                DrawRectangle(0, 0, W, H, Color{6, 2, 4, (unsigned char)(40 + s * 200)});
-                float r = H * (0.2f + s * 0.65f);
-                DrawCircle(W / 2, H / 2, r, Color{14, 6, 8, 255});
-                DrawCircle(W / 2 - (int)(r * 0.36f), H / 2 - (int)(r * 0.12f), r * 0.11f, Color{230, 225, 210, 255});
-                DrawCircle(W / 2 + (int)(r * 0.36f), H / 2 - (int)(r * 0.12f), r * 0.11f, Color{230, 225, 210, 255});
-                DrawCircle(W / 2, H / 2 + (int)(r * 0.4f), r * 0.16f, Color{40, 10, 10, 255});
+                DrawRectangle(0, 0, W, H, Color{6, 2, 4, (unsigned char)(30 + s * 150)});
+                float pulse = 0.85f + 0.15f * std::sin((float)GetTime() * 34.f);
+                int ir = (int)(H * (1.35f - s * 0.85f) * pulse);
+                DrawRectangleGradientEx({0, 0, (float)W, (float)H},
+                                        Color{90, 10, 14, (unsigned char)(s * 160)},
+                                        Color{90, 10, 14, (unsigned char)(s * 160)},
+                                        BLANK, BLANK);
+                for (int b = 0; b < 5; b++) {   // soft dark ring closing in
+                    float a = (float)b / 5.f;
+                    DrawRing({W / 2.f, H / 2.f}, (float)ir * (1.15f + a),
+                             (float)ir * (1.45f + a * 1.3f), 0, 360, 48,
+                             Color{8, 2, 4, (unsigned char)(s * 46)});
+                }
             }
             if (mode == Mode::Pause) DrawPause();
         }

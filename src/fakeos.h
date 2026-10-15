@@ -52,6 +52,7 @@ public:
     bool reqFocusReport = false, reqFocusCall = false;   // focus on next draw (auto-focus on open)
     float focusGrace = 0;   // briefly ignore input after focus flips on - the
                             // interact keypress that sat us down must not type
+    float bootT = 0.f;      // POST/boot overlay - plays once per shift
 
     void Reset() {
         app = App::None; reportText.clear(); statusLine.clear(); statusT = 0;
@@ -60,6 +61,7 @@ public:
         paperChecks.clear(); paperSign.clear();
         focusPaper = reqFocusPaper = false;
         focusGrace = 0;
+        bootT = 1.6f;       // fresh shift = fresh boot on first monitor sit
     }
 
     void SetStatus(const std::string& s) { statusLine = s; statusT = 6.f; }

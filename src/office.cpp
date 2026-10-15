@@ -657,7 +657,7 @@ void Office::DrawRooms() const {
     }
 }
 
-void Office::DrawShadowFigure(Vector3 feet, float yawDeg, float hs, float armRaise) {
+void Office::DrawShadowFigure(Vector3 feet, float yawDeg, float hs, float armRaise, float scare) {
     DrawBlobShadow({feet.x, 0.015f, feet.z}, 0.50f * hs, 0.50f * hs, 0.45f, yawDeg);
     float yr = yawDeg * DEG2RAD;
     Vector3 f{std::sin(yr), 0, std::cos(yr)};
@@ -678,8 +678,10 @@ void Office::DrawShadowFigure(Vector3 feet, float yawDeg, float hs, float armRai
              feet.z + rt.z * 0.185f * s * hs}, 0.078f * hs, body);
     {
         Vector3 sh{feet.x - rt.x * 0.19f * hs, feet.y + 1.30f * hs, feet.z - rt.z * 0.19f * hs};
-        Vector3 hand{feet.x - rt.x * 0.225f * hs + f.x * 0.06f * hs, feet.y + 0.56f * hs,
-                     feet.z - rt.z * 0.225f * hs + f.z * 0.06f * hs};
+        // scare: the left arm also reaches for the camera instead of hanging
+        Vector3 hand{feet.x - rt.x * 0.225f * hs + f.x * (0.06f + scare * 0.5f) * hs,
+                     feet.y + (0.56f + scare * 0.85f) * hs,
+                     feet.z - rt.z * 0.225f * hs + f.z * (0.06f + scare * 0.5f) * hs};
         DrawCylinderEx(sh, hand, 0.042f * hs, 0.034f * hs, 6, body);
         Sph(hand, 0.046f * hs, body);
     }
@@ -690,13 +692,32 @@ void Office::DrawShadowFigure(Vector3 feet, float yawDeg, float hs, float armRai
         DrawCylinderEx(sh, hand, 0.042f * hs, 0.034f * hs, 6, body);
         Sph(hand, 0.046f * hs, body);
     }
-    // head sits a touch forward, neck implied - reads as leaning toward you
-    Sph({feet.x + f.x * 0.018f * hs, feet.y + 1.5f * hs, feet.z + f.z * 0.018f * hs}, 0.11f * hs, body);
-    // faint eyes
-    Vector3 e1{feet.x + f.x * 0.1f * hs - f.z * 0.045f, feet.y + 1.53f * hs, feet.z + f.z * 0.1f * hs + f.x * 0.045f};
-    Vector3 e2{feet.x + f.x * 0.1f * hs + f.z * 0.045f, feet.y + 1.53f * hs, feet.z + f.z * 0.1f * hs - f.x * 0.045f};
-    Sph(e1, 0.013f * hs, Color{220, 220, 210, 200});
-    Sph(e2, 0.013f * hs, Color{220, 220, 210, 200});
+    // head sits a touch forward, neck implied - reads as leaning toward you.
+    // scare > 0 pulls the skull DOWN to lens height and closer in - the face
+    // is the last thing on screen, not the chest
+    float lean = 0.018f + scare * 0.16f;
+    Vector3 hc{feet.x + f.x * lean * hs, feet.y + (1.5f - scare * 0.14f) * hs,
+               feet.z + f.z * lean * hs};
+    Sph(hc, (0.11f + scare * 0.02f) * hs, body);
+    // faint eyes - widened and gone pale-bright when it strikes
+    Vector3 e1{hc.x + f.x * 0.088f * hs - f.z * 0.045f, hc.y + 0.030f * hs,
+               hc.z + f.z * 0.088f * hs + f.x * 0.045f};
+    Vector3 e2{hc.x + f.x * 0.088f * hs + f.z * 0.045f, hc.y + 0.030f * hs,
+               hc.z + f.z * 0.088f * hs - f.x * 0.045f};
+    float er = (0.013f + scare * 0.011f) * hs;
+    Color eye{(unsigned char)(220 + scare * 35), (unsigned char)(220 - scare * 30),
+              (unsigned char)(210 - scare * 60), 255};
+    Sph(e1, er, eye);
+    Sph(e2, er, eye);
+    if (scare > 0.05f) {
+        // open screaming mouth - a squashed dark sphere under the eye line
+        rlPushMatrix();
+        rlTranslatef(hc.x + f.x * 0.095f * hs, hc.y - 0.048f * hs,
+                     hc.z + f.z * 0.095f * hs);
+        rlScalef(0.052f * hs * (0.6f + scare), 0.062f * hs * scare, 0.040f * hs);
+        Sph({0.f, 0.f, 0.f}, 1.0f, Color{26, 6, 10, 255});
+        rlPopMatrix();
+    }
     // banging arm: pendulums between hanging and a forward overhead slam -
     // paired with BangerStrike()'s knock audio it reads as pounding the door
     if (armRaise > 0.02f) {

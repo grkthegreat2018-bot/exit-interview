@@ -123,6 +123,10 @@ private:
     void Tut(const char* key, const std::string& msg);  // fire-once night-1 hint
     int tutStep = -1;               // night-0 scripted lesson plan (-1 = off)
     void UpdateTutorial(float dt);  // advances the orientation sequence
+    std::string tutTitle;           // active lesson card: header + body + focus
+    std::string tutMsg;
+    std::string tutFocus;           // what the card points at ("the door")
+    float tutMsgT = 0.f;            // final card self-expires on this
     int paperReq = -1;              // LLM paperwork generation job
     std::string paperRaw;           // generated forms, validated at shift start
     json paperForms = json::array();            // tonight's forms (LLM or stock)
@@ -141,6 +145,11 @@ private:
     void PhoneOutcome(bool calm);
 
     float scareT = 0;
+    float ambT = 14.f;                  // next distant building-settle sfx
+    std::vector<Vector3> motes;         // dust drifting in the desk light
+    Vector3 scareFrom{0.f, 0.f, 0.f};   // where the killer stands / stood
+    Vector3 scareFig{0.f, 0.f, 0.f};    // its lunging position this frame
+    bool scareHit2 = false;             // second audio layer fired
     std::string ending, deathTitle;
     std::string pauseReason;
     float heartT = 0;               // instability heartbeat timer

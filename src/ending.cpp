@@ -238,7 +238,19 @@ void Game::Jumpscare(const std::string& reason) {
         return;
     }
     mode = Mode::Jumpscare;
-    scareT = 0;
+    scareT = 0; scareHit2 = false;
+    // where the killer is standing - the camera locks onto it and it lunges
+    // into the lens. Without a known source it drops in right in front.
+    if (reason == "intruder" && ad.IntruderActive()) scareFrom = ad.IntruderPos();
+    else if (reason.rfind("breach", 0) == 0 && (breachRush >= 0.f || breachSearchT > 0.f))
+        scareFrom = breachFrom;
+    else if (reason == "lunge" && vs.HasActiveVisitor()) scareFrom = vs.Cur().pos;
+    else {
+        float yr = player.yaw * DEG2RAD;
+        scareFrom = {player.pos.x + std::sin(yr) * 1.4f, 0.f,
+                     player.pos.z + std::cos(yr) * 1.4f};
+    }
+    scareFig = scareFrom;
     // callers may pre-set a specific title (breach deaths) - only default here
     if (deathTitle.empty())
         deathTitle = (reason == "intruder") ? "IT WAS BEHIND YOU" : "THE INTERVIEW IS OVER";

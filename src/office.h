@@ -123,7 +123,7 @@ public:
           monitorGlow{150, 200, 235, 255};
 
     static void DrawShadowFigure(Vector3 feet, float yawDeg, float heightScale = 1.1f,
-                                 float armRaise = 0.f);   // >0 = slamming arm (door banger)
+                                 float armRaise = 0.f, float scare = 0.f);   // >0 = slamming arm (door banger)
 
     std::vector<Furni> items;
     uint64_t tick = 0;              // frame counter - bumped by Update()

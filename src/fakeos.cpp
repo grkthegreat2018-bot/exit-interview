@@ -60,6 +60,29 @@ void FakeOS::TextField(const Assets& a, Rectangle r, std::string& text, bool& fo
 
 void FakeOS::Draw(const Assets& a, int W, int H) {
     typing = acceptsText && (focusReport || focusCall);
+    if (bootT > 0.f) {
+        // POST crawl - the terminal still boots like it's 1994. Lines land
+        // progressively as the timer drains; Game ticks it while seated.
+        DrawRectangle(0, 0, W, H, Color{7, 9, 12, 255});
+        static const char* post[] = {
+            "MERIDIAN SYSTEMS   BIOS v3.1.4",
+            "MEM  65536K ................ OK",
+            "KBD  ..................... OK",
+            "CRT  ..................... OK",
+            "NET LINK ................ DOWN",
+            "SPOOLER ................. OK",
+            "Loading MERIDIAN HR SHELL ...",
+        };
+        int shown = std::min(7, (int)((1.6f - bootT) * 11.f));
+        float y = 62.f;
+        for (int i = 0; i < shown; i++) {
+            DrawTextEx(a.fontMono, post[i], {60.f, y}, 20, 1, Color{145, 190, 165, 255});
+            y += 27.f;
+        }
+        if (shown >= 7 && ((int)(GetTime() * 3) % 2 == 0))
+            DrawTextEx(a.fontMono, "_", {60.f, y}, 20, 1, Color{145, 190, 165, 255});
+        return;
+    }
     // monitor bezel + wallpaper (kept bright enough to read as "on" in-world)
     DrawRectangle(0, 0, W, H, Color{10, 12, 16, 255});
     Rectangle scr(24.f, 24.f, (float)W - 48.f, (float)H - 48.f);
@@ -69,6 +92,13 @@ void FakeOS::Draw(const Assets& a, int W, int H) {
         int y = 24 + i * (int)(scr.height / 24.f);
         DrawLine(24, y, 24 + (int)scr.width, y, Color{40, 55, 76, 255});
     }
+    // faint corporate watermark - the company is always in the room with you
+    {
+        Vector2 wm = MeasureTextEx(a.font, "MERIDIAN", 58, 3);
+        DrawTextEx(a.font, "MERIDIAN",
+                   {scr.x + (scr.width - wm.x) / 2.f, scr.y + scr.height * 0.42f},
+                   58, 3, Color{220, 235, 245, 16});
+    }
 
     // desktop icons
     struct Icon { App ap; const char* label; };
@@ -77,10 +107,46 @@ void FakeOS::Draw(const Assets& a, int W, int H) {
     float iy = 60.f;
     for (auto& ic : icons) {
         Rectangle r(50.f, iy, 150.f, 58.f);
-        Color c = (app == ic.ap) ? Color{85, 110, 145, 255} : Color{52, 68, 92, 255};
+        bool hov = interactive && CheckCollisionPointRec(mouse, r);
+        Color c = (app == ic.ap) ? Color{85, 110, 145, 255}
+                : hov          ? Color{66, 84, 112, 255} : Color{52, 68, 92, 255};
         DrawRectangleRounded(r, 0.1f, 6, c);
-        Vector2 ts = MeasureTextEx(a.fontSmall, ic.label, 19, 1);
-        DrawTextEx(a.fontSmall, ic.label, Vector2{r.x + (r.width - ts.x) / 2, r.y + (r.height - 15.f) / 2}, 19, 1,
+        // small glyph above the label - reads at a glance across the desk
+        float gx = r.x + r.width / 2.f, gy = r.y + 17.f;
+        Color gcol{200, 216, 232, 255};
+        switch (ic.ap) {
+            case App::Appointments:   // calendar grid
+                DrawRectangleLinesEx({gx - 11.f, gy - 9.f, 22.f, 18.f}, 1.6f, gcol);
+                DrawLineEx({gx - 11.f, gy - 3.f}, {gx + 11.f, gy - 3.f}, 1.4f, gcol);
+                DrawLineEx({gx - 3.f, gy - 3.f}, {gx - 3.f, gy + 9.f}, 1.2f, gcol);
+                DrawLineEx({gx + 4.f, gy - 3.f}, {gx + 4.f, gy + 9.f}, 1.2f, gcol);
+                break;
+            case App::Records:        // person bust
+                DrawCircleV({gx, gy - 4.f}, 5.2f, gcol);
+                DrawCircleV({gx, gy + 9.f}, 8.5f, gcol);
+                break;
+            case App::Report: {       // report triangle
+                Vector2 p1{gx, gy - 10.f}, p2{gx + 11.f, gy + 8.f}, p3{gx - 11.f, gy + 8.f};
+                DrawTriangleLines(p1, p2, p3, gcol);
+                DrawTextEx(a.fontMono, "!", {gx - 3.f, gy - 4.f}, 16, 1, gcol);
+                break;
+            }
+            case App::Phone:          // handset
+                DrawRectangleRounded({gx - 10.f, gy - 4.f, 20.f, 9.f}, 0.5f, 6, gcol);
+                DrawCircleV({gx - 8.f, gy - 1.f}, 4.5f, gcol);
+                DrawCircleV({gx + 8.f, gy - 1.f}, 4.5f, gcol);
+                break;
+            case App::Paperwork:      // clipboard
+                DrawRectangleLinesEx({gx - 8.5f, gy - 10.f, 17.f, 21.f}, 1.6f, gcol);
+                DrawRectangle((int)(gx - 4.f), (int)(gy - 12.f), 8, 4, gcol);
+                DrawLineEx({gx - 5.f, gy - 3.f}, {gx + 5.f, gy - 3.f}, 1.2f, gcol);
+                DrawLineEx({gx - 5.f, gy + 2.f}, {gx + 5.f, gy + 2.f}, 1.2f, gcol);
+                DrawLineEx({gx - 5.f, gy + 7.f}, {gx + 2.f, gy + 7.f}, 1.2f, gcol);
+                break;
+            default: break;
+        }
+        Vector2 ts = MeasureTextEx(a.fontSmall, ic.label, 18, 1);
+        DrawTextEx(a.fontSmall, ic.label, Vector2{r.x + (r.width - ts.x) / 2, r.y + 33.f}, 18, 1,
                    Color{215, 230, 240, 255});
         Vector2 m = mouse;
         if (interactive && CheckCollisionPointRec(m, r) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
@@ -278,6 +344,18 @@ void FakeOS::Draw(const Assets& a, int W, int H) {
     // taskbar
     DrawRectangle(24, H - 52, W - 48, 28, Color{14, 18, 24, 255});
     DrawTextEx(a.fontSmall, "MERIDIAN HR TERMINAL v3.1", Vector2{36.f, H - 47.f}, 19, 1, Color{135, 155, 172, 255});
+    // open app + network state read like a real taskbar tray
+    if (app != App::None) {
+        const char* nm = app == App::Appointments ? "APPOINTMENTS" :
+                         app == App::Records      ? "PERSONNEL"   :
+                         app == App::Report       ? "REPORT"      :
+                         app == App::Phone        ? "PHONE"       : "PAPERWORK";
+        DrawRectangleRounded({302.f, (float)H - 49.f, 160.f, 22.f}, 0.2f, 4, Color{40, 52, 68, 255});
+        DrawTextEx(a.fontSmall, nm, {312.f, (float)H - 46.f}, 16, 1, Color{180, 205, 225, 255});
+    }
+    DrawCircleV({(float)W - 208.f, (float)H - 38.f}, 4.f, Color{200, 90, 80, 255});
+    DrawTextEx(a.fontSmall, "NET DOWN", {(float)W - 198.f, (float)H - 45.f}, 15, 1,
+               Color{200, 140, 130, 255});
     if (clockHour >= 0.f) {
         // right-edge system clock - same dim cyan-grey as the taskbar label
         std::string clk = FmtClock(clockHour);
