@@ -87,6 +87,7 @@ private:
     bool offlineNotified = false;
     bool hardcodedOnly = true;      // settings: scripted anomalies only (no LLM remix/calls)
     bool tutorialSkip = false;      // settings: night 0 orientation is optional
+    bool autoUpdate = true;         // settings: download+apply releases hands-free
     bool confirmTut = false;        // title modal: "start the training shift?"
 
     // desk-phone anomaly call: an anomaly that phones you, persona-driven

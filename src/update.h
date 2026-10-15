@@ -34,7 +34,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $stage = Join-Path $root '_update\stage'
 try {
     while (Get-Process -Id $GamePid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 300 }
-    Expand-Archive -Force (Join-Path $root '_update\pkg.bin') $stage
+    Expand-Archive -Force (Join-Path $root '_update\pkg.zip') $stage
     $manifest = Get-Content (Join-Path $stage 'manifest.json') -Raw | ConvertFrom-Json
     $newPaths = @{}
     foreach ($f in $manifest.files) {
@@ -70,7 +70,7 @@ try {
         Copy-Item -Force (Join-Path $root '_update\pending.txt') (Join-Path $root '_upd_done.txt')
     }
     Remove-Item -Recurse -Force (Join-Path $root '_update')
-    Start-Process (Join-Path $root 'exit_interview.exe')
+    Start-Process -WorkingDirectory $root (Join-Path $root 'exit_interview.exe')
 } catch {
     Set-Content (Join-Path $root '_update_failed.txt') $_.Exception.Message
 }
@@ -214,13 +214,22 @@ public:
         std::thread([this] { DownloadThread(); }).detach();
     }
 
+    // everything lives under the EXE's directory, not the process cwd - a
+    // launch from another folder must still patch the install it ran from
+    static std::string Root() {
+        const char* d = GetApplicationDirectory();
+        std::string r = d ? d : ".";
+        while (!r.empty() && (r.back() == '/' || r.back() == '\\')) r.pop_back();
+        return r.empty() ? "." : r;
+    }
+
     // writes the apply script + hands off - caller should quit immediately
     bool ApplyAndRelaunch() {
         if (GetState() != State::Ready) return false;
         std::error_code ec;
-        std::filesystem::create_directories("_update", ec);
+        std::filesystem::create_directories(Root() + "/_update", ec);
 #ifdef _WIN32
-        const char* script = "_update/apply_update.ps1";
+        std::string script = Root() + "/_update/apply_update.ps1";
         {
             std::ofstream f(script, std::ios::binary);
             f << kApplyScriptWin;
@@ -228,8 +237,8 @@ public:
         // detached powershell: waits for this PID to exit, patches, relaunches.
         // `start /b` detaches via cmd so no windows.h types are needed here
         std::string cmd = "start \"\" /b powershell -NoProfile -ExecutionPolicy Bypass"
-                          " -WindowStyle Hidden -File \"_update\\apply_update.ps1\" -GamePid " +
-                          std::to_string(_getpid());
+                          " -WindowStyle Hidden -File \"" + script +
+                          "\" -GamePid " + std::to_string(_getpid());
         if (std::system(cmd.c_str()) != 0) {
             st = State::Error;
             std::lock_guard<std::mutex> l(m);
@@ -237,13 +246,13 @@ public:
             return false;
         }
 #else
-        const char* script = "_update/apply_update.sh";
+        std::string script = Root() + "/_update/apply_update.sh";
         {
             std::ofstream f(script, std::ios::binary);
             f << kApplyScriptNix;
         }
-        chmod(script, 0755);
-        std::string cmd = "setsid sh \"_update/apply_update.sh\" " +
+        chmod(script.c_str(), 0755);
+        std::string cmd = "setsid sh \"" + script + "\" " +
                           std::to_string((int)getpid()) + " >/dev/null 2>&1 &";
         if (std::system(cmd.c_str()) != 0) { st = State::Error; return false; }
 #endif
@@ -259,18 +268,19 @@ public:
     void ForceState(State s, const char* ver, const char* notes) {
         std::lock_guard<std::mutex> l(m);
         newVer = ver; changelog = notes;
+        if (s == State::Applied) appliedTag = ver;   // remember what we just applied
         st = s;
     }
 
     // one-shot "update applied" report for the boot after an update
     static bool ConsumeAppliedMarker(std::string& ver, std::string& notes) {
-        std::ifstream f("_upd_done.txt", std::ios::binary);
+        std::ifstream f(Root() + "/_upd_done.txt", std::ios::binary);
         if (!f) return false;
         std::getline(f, ver);
         notes.assign(std::istreambuf_iterator<char>(f), {});
         std::error_code ec;
         f.close();
-        std::filesystem::remove("_upd_done.txt", ec);
+        std::filesystem::remove(Root() + "/_upd_done.txt", ec);
         return !ver.empty();
     }
 
@@ -298,7 +308,8 @@ private:
     // github.com onto the CDN hosts) - hosts restricted to the github set
     bool HttpGet(const std::string& host, const std::string& path,
                  std::string* body, const std::string& saveTo,
-                 std::atomic<float>* prog, std::atomic<bool>* cancel) {
+                 std::atomic<float>* prog, std::atomic<bool>* cancel,
+                 const char* accept = "application/vnd.github+json") {
         static const char* okHosts[] = {"api.github.com", "github.com",
             "objects.githubusercontent.com", "release-assets.githubusercontent.com",
             "github-releases.githubusercontent.com", "api.github.com"};
@@ -313,7 +324,7 @@ private:
             cli.enable_server_certificate_verification(false);
             cli.set_follow_location(false);
             httplib::Headers hd{{"User-Agent", "exit-interview-updater"},
-                                {"Accept", "application/vnd.github+json"}};
+                                {"Accept", accept}};
             httplib::Result r;
             if (!saveTo.empty()) {
                 std::ofstream out(saveTo, std::ios::binary | std::ios::trunc);
@@ -366,7 +377,11 @@ private:
             json j;
             try { j = json::parse(body); } catch (...) { j = json::object(); }
             std::string tag = j.value("tag_name", "");
-            if (!tag.empty() && Newer(tag, cur)) {
+            // never re-detect the version a previous apply just installed -
+            // a package whose stamped version lags its tag would loop
+            // download->apply->relaunch forever
+            if (!tag.empty() && Newer(tag, cur) &&
+                tag != appliedTag) {
                 std::string asset;
 #ifdef _WIN32
                 const char* want = "win64.zip";
@@ -394,9 +409,116 @@ private:
         } else {
             TraceLog(LOG_INFO, "[update] release check failed (offline? no releases?) - will retry on title");
         }
-        // no usable release - most installs are source builds, so a newer
-        // main branch counts as "a new version" too
+        // no usable tagged release - the rolling nightly carries an
+        // installable package for every push to main
+        CheckNightly();
+    }
+
+    // ci republishes tag "nightly" on every main push: both platform packages
+    // + "build: <sha>" in the notes. A nightly built on a commit our binary
+    // predates downloads and applies exactly like a tagged release
+    void CheckNightly() {
+        if (sha.empty()) { CheckCommits(); return; }
+        std::string body;
+        if (HttpGet("api.github.com",
+                    "/repos/" + repo + "/releases?per_page=8",
+                    &body, "", nullptr, &stop) && !stop) {
+            json arr;
+            try { arr = json::parse(body); } catch (...) { arr = json::array(); }
+            if (arr.is_array()) {
+                for (auto& rel : arr) {
+                    if (rel.value("tag_name", "") != "nightly") continue;
+                    std::string rbody = rel.value("body", ""), relSha;
+                    auto bp = rbody.find("build:");
+                    if (bp != std::string::npos) {
+                        size_t s = bp + 6;
+                        while (s < rbody.size() && rbody[s] == ' ') s++;
+                        size_t e = rbody.find_first_of("\r\n ", s);
+                        relSha = rbody.substr(s, e == std::string::npos
+                                              ? std::string::npos : e - s);
+                    }
+                    // same commit or the build FROM this commit - up to date
+                    if (relSha.empty() || relSha == sha ||
+                        relSha.find(sha) == 0 || sha.find(relSha) == 0) {
+                        st = State::Idle; return;
+                    }
+                    if (!RemoteAhead(relSha)) { st = State::Idle; return; }
+                    std::string asset;
+#ifdef _WIN32
+                    const char* want = "win64.zip";
+#else
+                    const char* want = "linux64.tar.gz";
+#endif
+                    if (rel.contains("assets"))
+                        for (auto& a : rel["assets"]) {
+                            std::string nm = a.value("name", "");
+                            if (nm.size() >= strlen(want) &&
+                                nm.compare(nm.size() - strlen(want),
+                                           strlen(want), want) == 0)
+                                asset = a.value("browser_download_url", "");
+                        }
+                    // real version rides in the notes ("version: X") - fall
+                    // back to the sha label for hand-made nightlies
+                    std::string rv;
+                    auto vp = rbody.find("version:");
+                    if (vp != std::string::npos) {
+                        size_t s = vp + 8;
+                        while (s < rbody.size() && rbody[s] == ' ') s++;
+                        size_t e = rbody.find_first_of("\r\n ", s);
+                        rv = rbody.substr(s, e == std::string::npos
+                                           ? std::string::npos : e - s);
+                    }
+                    std::string label = !rv.empty()
+                        ? (rv[0] == 'v' ? rv : "v" + rv) + "-dev." + relSha.substr(0, 7)
+                        : "nightly " + relSha.substr(0, 7);
+                    if (label == appliedTag) { st = State::Idle; return; }
+                    {
+                        std::lock_guard<std::mutex> l(m);
+                        newVer = label;
+                        changelog = "latest build from main:  " + sha +
+                                    " -> " + relSha.substr(0, 7) + "\n\n" +
+                                    "(built straight from source - grab it or "
+                                    "pull main and build yourself instead)";
+                        assetUrl = asset;
+                    }
+                    st = State::Available;
+                    TraceLog(LOG_INFO, "[update] nightly %s is newer than build %s",
+                             relSha.c_str(), sha.c_str());
+                    return;
+                }
+            }
+        } else if (!stop) {
+            TraceLog(LOG_INFO, "[update] release list fetch failed");
+        }
         CheckCommits();
+    }
+
+    // the version the remote's assets/config.json currently declares - used
+    // to label commit-ahead notices with a real number instead of "main+N"
+    std::string RemoteVersion() {
+        std::string body;
+        if (!HttpGet("api.github.com",
+                     "/repos/" + repo + "/contents/assets/config.json",
+                     &body, "", nullptr, &stop, "application/vnd.github.raw") ||
+            stop)
+            return "";
+        try {
+            json j = json::parse(body);
+            return j["game"].value("version", "");
+        } catch (...) { return ""; }
+    }
+
+    // GET compare/{build}...{remote} - "ahead" means remote descends from
+    // this binary's commit, i.e. there is genuinely newer code to install
+    bool RemoteAhead(const std::string& remoteSha) {
+        std::string body;
+        if (!HttpGet("api.github.com",
+                     "/repos/" + repo + "/compare/" + sha + "..." + remoteSha,
+                     &body, "", nullptr, &stop) || stop)
+            return false;
+        json j;
+        try { j = json::parse(body); } catch (...) { return false; }
+        return j.value("status", "") == "ahead";
     }
 
     // GET compare/{build}...{branch}: "ahead" = remote main has commits this
@@ -434,9 +556,14 @@ private:
             notes += "\nsource build " + std::to_string(n) +
                      " commit" + (n == 1 ? "" : "s") +
                      " behind - pull main or grab the latest build";
+            std::string rv = RemoteVersion();
+            std::string label = !rv.empty()
+                ? (rv[0] == 'v' ? rv : "v" + rv) + " +" + std::to_string(n)
+                : "main+" + std::to_string(n);
+            if (label == appliedTag) { st = State::Idle; return; }
             {
                 std::lock_guard<std::mutex> l(m);
-                newVer = "main+" + std::to_string(n);
+                newVer = label;
                 changelog = notes;
                 assetUrl.clear();
             }
@@ -457,8 +584,14 @@ private:
         std::string host = url.substr(8, sl - 8), path = url.substr(sl);
         gotBytes = 0; totalBytes = 0;
         std::error_code ec;
-        std::filesystem::create_directories("_update", ec);
-        bool okd = HttpGet(host, path, nullptr, "_update/pkg.bin", &progress, &stop);
+        std::filesystem::create_directories(Root() + "/_update", ec);
+        // Expand-Archive refuses non-.zip payloads; tar doesn't care
+#ifdef _WIN32
+        const char* pkg = "/_update/pkg.zip";
+#else
+        const char* pkg = "/_update/pkg.bin";
+#endif
+        bool okd = HttpGet(host, path, nullptr, Root() + pkg, &progress, &stop);
         if (!okd || stop) {
             st = State::Error;
             std::lock_guard<std::mutex> l(m);
@@ -468,7 +601,7 @@ private:
         progress = 1.f;
         // leave a marker for the apply script + the post-update popup
         {
-            std::ofstream f("_update/pending.txt", std::ios::binary);
+            std::ofstream f(Root() + "/_update/pending.txt", std::ios::binary);
             std::lock_guard<std::mutex> l(m);
             f << newVer << "\n" << changelog;
         }
@@ -482,6 +615,7 @@ private:
     std::atomic<bool> stop{false};
     std::atomic<bool> started{false};
     std::string assetUrl;
+    std::string appliedTag;         // version this boot already applied - loop guard
     double gotBytes = 0, totalBytes = 0;
     std::string newVer, changelog, errMsg;
     mutable std::mutex m;

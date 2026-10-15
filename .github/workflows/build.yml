@@ -155,3 +155,35 @@ jobs:
             --title "EXIT INTERVIEW $GITHUB_REF_NAME" \
             --generate-notes \
             exit-interview-win64.zip exit-interview-linux64.tar.gz
+
+  # every main push refreshes a rolling "nightly" prerelease carrying both
+  # platform packages - source/dev builds auto-update to the newest commit
+  # instead of waiting for a tag. the body line "build: <sha>" lets the
+  # updater compare against its baked-in EI_BUILD_SHA
+  nightly:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: exit-interview-*
+          merge-multiple: true
+          path: rel
+      - name: Republish nightly
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd rel
+          # the packaged config carries the build's version - the updater
+          # shows it instead of a bare "nightly" label
+          ver=$(unzip -p exit-interview-win64.zip assets/config.json \
+                | python3 -c "import json,sys; print(json.load(sys.stdin)['game']['version'])")
+          gh release delete nightly --cleanup-tag -y 2>/dev/null || true
+          gh release create nightly \
+            --title "nightly ${{ github.sha }}" \
+            --notes "version: $ver"$'\n'"build: ${{ github.sha }}" \
+            --prerelease \
+            exit-interview-win64.zip exit-interview-linux64.tar.gz

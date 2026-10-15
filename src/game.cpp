@@ -138,7 +138,11 @@ bool Game::Init() {
                 "- clipboard paper is now regulation weight\n");
             updOpen = 1;
         } else if (!uh || std::strcmp(uh, "off")) {
-            updater->Start(repoUrl, gameVersion, EI_BUILD_SHA);
+            // dev hooks: EI_VER/EI_SHA simulate an outdated installed build
+            const char* ev = std::getenv("EI_VER");
+            const char* es = std::getenv("EI_SHA");
+            updater->Start(repoUrl, ev && *ev ? ev : gameVersion,
+                           es ? es : EI_BUILD_SHA);
         }
     }
     // dev screenshots (EI_SHOT / F12 / EI_DUMPRT) collect in shots/ instead
@@ -600,6 +604,10 @@ void Game::ExecSeq(const std::string& c) {
         seqInvite = true;   // fires the moment the visitor reaches the door
     } else if (op == "sit") {
         SitDown();
+    } else if (op == "updload") {   // updater: kick the package download
+        if (updater) updater->BeginDownload();
+    } else if (op == "updapply") {  // updater: stage apply + quit (script relaunches)
+        if (updater && updater->ApplyAndRelaunch()) quit = true;
     } else if (op == "sitv") {
         // sit and face the visitor - SitDown lands on the monitor when the
         // seat choice races their sit; flip back if they're already seated
@@ -2213,6 +2221,19 @@ void Game::Run() {
                             updRetries++;
                         }
                         updRetryT = 0.f;
+                    }
+                    // AUTO-UPDATE (settings): a found release downloads in the
+                    // background, then applies the moment the package is ready -
+                    // the script relaunches the game itself. Saves/settings/key
+                    // ride along untouched (they live outside the manifest)
+                    if (autoUpdate) {
+                        auto us = updater->GetState();
+                        if (us == GameUpdater::State::Available &&
+                            !updater->Assetless())
+                            updater->BeginDownload();
+                        else if (us == GameUpdater::State::Ready &&
+                                 updater->ApplyAndRelaunch())
+                            quit = true;
                     }
                 }
                 // dev hook: EI_MENU=<tab 0..3> pins the settings page open (shots)

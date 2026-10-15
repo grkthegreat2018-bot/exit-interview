@@ -218,7 +218,11 @@ void Game::DrawTitle() {
     // repo link
     {
         std::string cr = JS(Cfg()["game"], "credits",
-                            "Made by GRKTheGreat & Devin Desktop - 2026 - v1.0.0");
+                            "Made by GRKTheGreat & Devin Desktop - 2026");
+        // running version + baked commit - keeps the menu honest for dev
+        // builds where the number alone doesn't say which build this is
+        cr += " - v" + gameVersion;
+        if (EI_BUILD_SHA[0]) cr += " (" + std::string(EI_BUILD_SHA) + ")";
         std::string disc = JS(Cfg()["game"], "ai_disclaimer",
                               "made with AI assistance");
         std::string repo = JS(Cfg()["game"], "repo_url", "github.com/grkthegreat2018-bot/exit-interview");
@@ -245,8 +249,9 @@ void Game::DrawTitle() {
             std::string pill = "UPDATE " + updater->NewVersion() +
                 (us == GameUpdater::State::Ready ? " - READY" :
                  us == GameUpdater::State::Downloading ? " - downloading" : " AVAILABLE");
-            Vector2 ps = MeasureTextEx(A.fontSmall, pill.c_str(), 17, 1);
-            Rectangle pr{W - ps.x - 40.f, 16.f, ps.x + 24.f, 36.f};
+            // MenuBtn renders at font size 23 - size the pill for that, not 17
+            Vector2 ps = MeasureTextEx(A.font, pill.c_str(), 23, 1);
+            Rectangle pr{W - ps.x - 44.f, 14.f, ps.x + 28.f, 36.f};
             if (MenuBtn(pr, pill.c_str(), "A new release is out on github - view the changelog."))
                 updOpen = 1;
         }
@@ -499,6 +504,11 @@ void Game::DrawSettings() {
         if (MenuBtn(r, tutorialSkip ? "ORIENTATION: SKIP" : "ORIENTATION: PLAY",
             "OFF shows a prompt before the training shift and you choose. ON skips the guided night entirely - fresh records start straight at Night 1.")) {
             tutorialSkip = !tutorialSkip; SaveSettings();
+        }
+        next();
+        if (MenuBtn(r, autoUpdate ? "AUTO-UPDATE: ON" : "AUTO-UPDATE: OFF",
+            "ON downloads a new release in the background and installs it the moment it's ready (the game relaunches itself). OFF leaves updating manual - the title badge still appears. Your save, settings and API key carry over untouched.")) {
+            autoUpdate = !autoUpdate; SaveSettings();
         }
         next();
         if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {
