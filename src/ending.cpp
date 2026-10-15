@@ -176,6 +176,11 @@ void Game::DrawDebugOverlay() const {
 
 void Game::Jumpscare(const std::string& reason) {
     if (mode == Mode::Jumpscare || mode == Mode::Dead) return;
+    if (godMode) {   // EI_GOD: log what would have killed the run and keep going
+        TraceLog(LOG_WARNING, "[god] jumpscare suppressed: %s", reason.c_str());
+        deathTitle.clear();
+        return;
+    }
     mode = Mode::Jumpscare;
     scareT = 0;
     // callers may pre-set a specific title (breach deaths) - only default here
@@ -189,6 +194,10 @@ void Game::Jumpscare(const std::string& reason) {
 
 void Game::Die(const std::string& title, const std::string& body) {
     if (mode == Mode::Dead) return;
+    if (godMode) {
+        TraceLog(LOG_WARNING, "[god] death suppressed: %s", title.c_str());
+        return;
+    }
     mode = Mode::Dead;
     deathTitle = title;
     ending = body;

@@ -313,7 +313,9 @@ bool Game::Init() {
         //   hold:W|A|S|D|SHIFT|Q,secs            interact  door  invite
         //   sit  stand  visitor  blinds  lights  say:<line>
         //   app:report|book|records|phone|paper|building|none
-        //   anom:<id>  kind:<kind>  call  notify:<text>  quit
+        //   anom:<id>  kind:<kind>  call  intruder  notify:<text>  quit
+        //   god (deaths log, never fire)  calm/heat (scheduler park/resume)
+        //   instab:<n>  hide  unhide   envs: EI_GOD EI_CALM EI_INSTAB
         std::string spec = sq;
         for (size_t p = 0, q; p <= spec.size(); p = (q == std::string::npos ? spec.size() + 1 : q + 1)) {
             q = spec.find(';', p);
@@ -331,6 +333,10 @@ bool Game::Init() {
         player.eyeH = 0.55f;
     }
     if (std::getenv("EI_DOOR")) doorOpen = true;   // dev: start with door swung open
+    if (std::getenv("EI_GOD")) godMode = true;     // dev: deaths log, never fire
+    if (std::getenv("EI_CALM")) ad.devCalm = true; // dev: spawn scheduler parked
+    if (const char* iv = std::getenv("EI_INSTAB")) // dev: preset instability
+        ad.AddInstability((float)std::atof(iv));
     if (const char* fa = std::getenv("EI_ANOM"))  // dev hook: force-spawn an office anomaly
         ad.DebugForceOffice(fa, office);
     if (const char* fk = std::getenv("EI_KIND"))  // dev hook: force-spawn any def by kind
@@ -644,6 +650,21 @@ void Game::ExecSeq(const std::string& c) {
     } else if (op == "call") {
         if (A.anomalies.contains("call_events"))
             ad.DebugCallEvent(A.anomalies["call_events"][0]);
+    } else if (op == "intruder") {
+        ad.DebugIntruder(office);
+    } else if (op == "god") {        // deaths get logged, not fired
+        godMode = true;
+    } else if (op == "calm") {       // park the spawn scheduler
+        ad.devCalm = true;
+    } else if (op == "heat") {       // resume rolling (undo calm)
+        ad.devCalm = false;
+    } else if (op == "instab") {     // instab:<n> nudges the meter
+        ad.AddInstability(arg.empty() ? 10.f : (float)atof(arg.c_str()));
+    } else if (op == "hide") {       // duck under the desk (survives breach searches)
+        if (const Furni* d = office.Find("desk")) player.pos = {d->pos.x, 0.f, d->pos.z};
+        player.crouching = player.forcedCrouch = true;
+    } else if (op == "unhide") {
+        player.forcedCrouch = player.crouching = player.hiding = false;
     } else if (op == "notify") {
         Notify(arg);
     } else if (op == "quit") {
@@ -1459,7 +1480,11 @@ void Game::UpdateCommon(float dt) {
     float breachUnlock = JF(nsc, "unlock_breach_night", 3.f);
     bool windowThreat = night >= breachUnlock && (office.blindsOpen || office.windowBroken) &&
         (vs.exteriorFigure == "figure_at_window" || (vs.bangerActive && vs.bangerAt == "window"));
-    bool doorThreat = night >= breachUnlock && (doorOpen || doorAnim > 0.45f) &&
+    // a door held open BY a work crew isn't the player's negligence - it
+    // won't push past uniforms. doorAnim mirrors doorOpen for crew too, so
+    // the whole door clause must yield while crewOpenedDoor is set.
+    bool doorAjar = (doorOpen || doorAnim > 0.45f) && !crewOpenedDoor;
+    bool doorThreat = night >= breachUnlock && doorAjar &&
         (vs.exteriorFigure == "figure_at_door" || (vs.bangerActive && vs.bangerAt == "door"));
     // a broken line of defence means almost no grace: shattered glass or an
     // open door lets it come straight through instead of stalking the gap
@@ -1600,7 +1625,10 @@ void Game::UpdateCommon(float dt) {
 
     shake = std::max(0.f, shake - dt * 1.6f);
 
-    if (ad.Instability() >= 100.f) Die("TERMINATED", JS(A.dialogs["endings"], "consumed"));
+    if (ad.Instability() >= 100.f) {
+        if (godMode) ad.AddInstability(99.f - ad.Instability());   // clamp under lethal
+        else Die("TERMINATED", JS(A.dialogs["endings"], "consumed"));
+    }
 
     for (auto& n : notes) n.second -= dt;
     std::erase_if(notes, [](auto& n) { return n.second <= 0; });

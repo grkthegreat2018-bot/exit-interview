@@ -62,6 +62,8 @@ public:
     bool DebugForceKind(const std::string& kind, Office& office,
                         VisitorSystem* vs = nullptr);   // spawn def by kind; vs applies room flags
     void DebugCallEvent(const json& ev);                            // dev hook: ring the desk phone now
+    void DebugIntruder(Office& office) { SpawnIntruder(office); }   // dev hook: force the intruder roll
+    bool devCalm = false;   // dev: parks the spawn scheduler (like night 0) but keeps flag sync
 
     // freeform (LLM) anomaly plumbing - off when the player picks scripted-only
     bool freeform = true;

@@ -82,8 +82,9 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
     }
 
     // spawn scheduler - night 0 runs a scripted lesson plan instead: the
-    // tutorial machine fires anomalies itself, nothing rolls here
-    if (night == 0) { ApplyExteriorFlags(office, vs); return; }
+    // tutorial machine fires anomalies itself, nothing rolls here;
+    // devCalm (EI_CALM / seq 'calm') parks the scheduler the same way
+    if (night == 0 || devCalm) { ApplyExteriorFlags(office, vs); return; }
     nextSpawnIn -= dt;
     if (nextSpawnIn <= 0) {
         // hard cap on live anomalies: without it a bad streak at a hot tier
@@ -390,6 +391,7 @@ void AnomalyDirector::SpawnIntruder(Office& office) {
     a.instab = JF(defs["intruder"], "instab", 1.8f);
     active.push_back(a);
     lastSpawnChannel = "intruder";
+    TraceLog(LOG_INFO, "[anomaly] spawned intruder kind=intruder channel=intruder");
 }
 
 void AnomalyDirector::ClearIntruder(Office& office) {
@@ -425,6 +427,7 @@ void AnomalyDirector::ApplyExteriorFlags(Office& office, VisitorSystem& vs) {
     vs.figureActive = figW || figD;
     if (figW) { vs.exteriorFigure = "figure_at_window"; vs.figurePos = office.figurePositions["at_window"]; }
     else if (figD) { vs.exteriorFigure = "figure_at_door"; vs.figurePos = office.figurePositions["at_door"]; }
+    else vs.exteriorFigure.clear();   // it left - a stale id would re-arm the breach check
     // the door figure doesn't just stand there - it pounds the door panel
     // (banger machinery: Knock sfx + swing anim + breach bookkeeping). A
     // real banging_door def still draws its own humanoid on top of this.
@@ -434,6 +437,7 @@ void AnomalyDirector::ApplyExteriorFlags(Office& office, VisitorSystem& vs) {
         vs.bangerPos = office.figurePositions["at_door"];
         vs.bangerPos.z += 0.60f;   // fists have to REACH the door panel
     } else if (bangW) { vs.bangerAt = "window"; vs.bangerPos = office.figurePositions["at_window"]; }
+    else vs.bangerAt.clear();
 }
 
 ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const std::string& anomalyId,

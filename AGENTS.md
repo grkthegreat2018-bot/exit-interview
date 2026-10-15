@@ -300,7 +300,13 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   defence collapses the grace: smashed window x0.35, open door x0.30 of
   `breach_sec`, and `AnomalyDirector`'s intruder timer drains ~2.4x while
   glass is broken or the door stands open (`breachDoor` picks the door
-  rush + "IT CAME THROUGH THE DOOR" ending).
+  rush + "IT CAME THROUGH THE DOOR" ending). Two fairness rules: the door
+  clause yields entirely while `crewOpenedDoor` is set - guards/facilities
+  holding the door open is not the player's negligence (they were dying to
+  door breaches mid-escort); and `vs.exteriorFigure`/`bangerAt` are
+  CLEARED by ApplyExteriorFlags when no figure/banger kind is live - they
+  used to linger stale, so every open door insta-breached after the first
+  figure was resolved or rushed in.
 
 ## Dev hooks (env vars)
 
@@ -356,8 +362,14 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   (sit + guarantee SitVisitor), `swap`, `stand`, `visitor` (CallNextEarly),
   `blinds`, `lights`, `say:<line>` (SayToVisitor),
   `app:report|book|records|phone|paper|building|none`, `anom:<id>`,
-  `kind:<kind>`, `call`, `notify:<text>`, `quit`. Runs off dbgT, so it is
-  frame-exact under EI_RECDUMP.
+  `kind:<kind>`, `call`, `intruder`, `notify:<text>`, `quit`,
+  `god` (deaths log a [god] line instead of firing - also clamps
+  instability under 100), `calm`/`heat` (park/resume the spawn
+  scheduler), `instab:<n>` (nudge the meter), `hide`/`unhide` (duck
+  under the desk, survives breach searches), `report:<text>`,
+  `fac:<text>`, `sec:intruder|anomaly`. Runs off dbgT, so it is
+  frame-exact under EI_RECDUMP. Env twins: `EI_GOD`, `EI_CALM`,
+  `EI_INSTAB=<n>`.
 - `EI_CLEAN=1` — clean-recording mode: flycam/path mechanics still work but
   all debug chrome is hidden (F3 overlay, osTex thumbnail, HUD clock,
   prompts, toasts, crosshair, ring indicator). Implied by `EI_PATH` (NOT

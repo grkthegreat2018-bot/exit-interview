@@ -60,6 +60,7 @@ private:
     float doorAnim = 0;             // 0 closed .. 1 swung open (hinge)
     float doorRattle = 0;           // transient door-panel shudder from banger hits
     bool manualLightsOff = false;   // player flicked the light switch off
+    bool godMode = false;           // EI_GOD / seq 'god' - deaths log instead of firing
     void CollectLights();           // build fx.lights from furniture + config
 
     // llm request ids
