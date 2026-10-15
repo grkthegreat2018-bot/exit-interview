@@ -578,6 +578,8 @@ void Game::PollLLM() {
     }
     if (facReq != -1 && llm.Poll(facReq, res)) {
         facReq = -1;
+        TraceLog(LOG_INFO, "[llm] facilities verdict backend=%s match=%d id=%s",
+                 res.backend.c_str(), (int)res.match, res.matchedId.c_str());
         if (res.match && ad.KindOf(res.matchedId).rfind("figure", 0) == 0) {
             // model matched a person - that's still Security's job
             os.SetCallReply(JS(A.dialogs["stub"], "facilities_redirect_security"));

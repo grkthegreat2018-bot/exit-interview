@@ -431,25 +431,43 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
             rlPopMatrix();
         }
     }
-    // beard: chin patch + jaw straps in darkened hair; a full beard adds the
-    // moustache bar and a longer chin mass
+    // beard: sphere clusters hugging the jawline in darkened hair - boxes
+    // pasted on the face read as blocks, lumps read as a beard. Spheres are
+    // rotation-invariant so these go straight onto hb/f/r, no matrix.
     if (a.beard > 0) {
         float hh = a.height;
         Color bc{(unsigned char)std::max(0, (int)a.hair.r - 8),
                  (unsigned char)std::max(0, (int)a.hair.g - 8),
                  (unsigned char)std::max(0, (int)a.hair.b - 8), 255};
-        rlPushMatrix();
-        rlTranslatef(hb.x, hb.y, hb.z);
-        rlRotatef(yawDeg, 0, 1, 0);
-        DrawCubeV({0, -0.062f * hh, 0.078f * hh}, {0.092f * hh, 0.052f * hh, 0.032f * hh}, bc); // chin
-        for (int s = -1; s <= 1; s += 2)
-            DrawCubeV({s * 0.080f * hh, -0.028f * hh, 0.038f * hh},
-                      {0.030f * hh, 0.072f * hh, 0.052f * hh}, bc);                            // jaw strap
-        if (a.beard > 1) {
-            DrawCubeV({0, -0.030f * hh, 0.094f * hh}, {0.072f * hh, 0.016f * hh, 0.024f * hh}, bc); // moustache
-            DrawCubeV({0, -0.088f * hh, 0.058f * hh}, {0.100f * hh, 0.034f * hh, 0.028f * hh}, bc); // fuller chin
+        // chin mass tucked under the jaw front
+        Sph({hb.x + f.x * 0.086f * hh, hb.y - 0.058f * hh, hb.z + f.z * 0.086f * hh},
+            0.040f * hh, bc);
+        // jaw pads + a sideburn nub per side so the beard reaches the hairline
+        for (int s = -1; s <= 1; s += 2) {
+            Sph({hb.x + f.x * 0.048f * hh + r.x * 0.062f * s * hh,
+                 hb.y - 0.036f * hh,
+                 hb.z + f.z * 0.048f * hh + r.z * 0.062f * s * hh}, 0.034f * hh, bc);
+            Sph({hb.x + f.x * 0.040f * hh + r.x * 0.085f * s * hh,
+                 hb.y - 0.010f * hh,
+                 hb.z + f.z * 0.040f * hh + r.z * 0.085f * s * hh}, 0.026f * hh, bc);
         }
-        rlPopMatrix();
+        // soul patch fills the gap between lip and chin
+        Sph({hb.x + f.x * 0.098f * hh, hb.y - 0.044f * hh, hb.z + f.z * 0.098f * hh},
+            0.015f * hh, bc);
+        if (a.beard > 1) {
+            // full beard: two-lobe moustache under the nose + a heavier chin mass
+            for (int s = -1; s <= 1; s += 2)
+                Sph({hb.x + f.x * 0.105f * hh + r.x * 0.021f * s * hh,
+                     hb.y - 0.030f * hh,
+                     hb.z + f.z * 0.105f * hh + r.z * 0.021f * s * hh}, 0.017f * hh, bc);
+            Sph({hb.x + f.x * 0.066f * hh, hb.y - 0.084f * hh, hb.z + f.z * 0.066f * hh},
+                0.048f * hh, bc);
+            // cheek coverage blends the pads up under the eyes
+            for (int s = -1; s <= 1; s += 2)
+                Sph({hb.x + f.x * 0.068f * hh + r.x * 0.075f * s * hh,
+                     hb.y - 0.018f * hh,
+                     hb.z + f.z * 0.068f * hh + r.z * 0.075f * s * hh}, 0.030f * hh, bc);
+        }
     }
     // arms - two segments with a real elbow; armRaise lerps hands from
     // hanging to raised overhead (ladder work), detain pins wrists behind
