@@ -1917,22 +1917,31 @@ void Game::DrawPlayerBody() {
     // your own chin hides your chest until you actually look down - and the
     // mid-pitch band just shows a shoulder slab, so the body only appears
     // once the view is steep enough to read chest-front -> legs -> feet
-    if (!crouch && player.pitch > -48.f) return;
-    // far enough forward that the eye axis clears the shoulder line: a
-    // straight-down look then reads chest-front -> stomach -> legs -> feet
-    // instead of the top face of the torso
+    if (!crouch && player.pitch > -40.f) return;
     float yr = player.yaw * DEG2RAD;
-    // the gate blends, not pops: just past the threshold the body sits
-    // sunken (only the upper chest clears the floor plane at the bottom of
-    // frame) and rises to full height by -62 deg
-    float band = crouch ? 1.f : std::clamp((-player.pitch - 48.f) / 14.f, 0.f, 1.f);
-    Vector3 at{player.pos.x + std::sin(yr) * 0.30f, -(1.f - band) * 1.35f,
-               player.pos.z + std::cos(yr) * 0.30f};
-    // scaled-down + narrower so the silhouette tucks under the chin
-    HumanoidApp fp = playerApp; fp.build = 0.80f; fp.height = 0.90f;
+    // Minecraft-style: the eye sits at the body's own head (a hair behind
+    // the neck axis so the near plane clips the chin/neck, not the chest),
+    // so looking down reads MY torso below me -> legs -> feet, not a body
+    // standing in front of me
+    float band = crouch ? 1.f : std::clamp((-player.pitch - 40.f) / 16.f, 0.f, 1.f);
+    Vector3 at{player.pos.x + std::sin(yr) * 0.02f, -(1.f - band) * 1.35f,
+               player.pos.z + std::cos(yr) * 0.02f};
+    // close under the eye + slightly forward: torso fills center frame,
+    // legs and feet extend to the bottom edge (Minecraft-style framing)
+    HumanoidApp fp = playerApp; fp.build = 0.82f; fp.height = 0.88f;
+    // leaning the whole humanoid ~20 deg forward about its hip axis is
+    // what sells "looking along my own body": the chest turns to face the
+    // downward view and the legs/feet recede past it to the bottom edge
+    // instead of hiding behind the chest-top face
+    rlPushMatrix();
+    float pivY = at.y + 0.95f * fp.height;
+    rlTranslatef(at.x, pivY, at.z);
+    rlRotatef(-20.f, std::cos(yr), 0.f, -std::sin(yr));
+    rlTranslatef(-at.x, -pivY, -at.z);
     DrawHumanoid(at, player.yaw, fp, crouch,
                  player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
                  player.moving ? 0.8f : 0.f, 0.f, {}, true);
+    rlPopMatrix();
 }
 
 void Game::DrawWorld() {
