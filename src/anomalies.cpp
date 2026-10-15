@@ -224,7 +224,8 @@ bool AnomalyDirector::TargetWatched(const json& d, Office& office) const {
 // tint on an already-hidden poster, "stopped" on a frozen clock), when the
 // target is missing/hidden, or when the mutation is a no-op against the
 // target's current state.
-bool AnomalyDirector::Undetectable(const json& d, Office& office) const {
+bool AnomalyDirector::Undetectable(const json& d, Office& office,
+                                     const VisitorSystem* vs) const {
     std::string tgt = JS(d, "target");
     const Furni* f = tgt.empty() ? nullptr : office.FindC(tgt);
     const json& mut = d.value("mutation", json::object());
@@ -239,6 +240,19 @@ bool AnomalyDirector::Undetectable(const json& d, Office& office) const {
         if (spw && !a.spawnedId.empty() && a.spawnedId == JS(*spw, "id")) return true;
     }
     if (f && f->hidden) return true;
+    // state-dependent kinds: nothing to mutate/evacuate/darken means nothing
+    // to see. The waiting room starts empty and refills slowly, so an early
+    // empty_room or mutated_waiting roll would otherwise drain in silence;
+    // lights_office while the player already killed the lights is the same.
+    if (vs) {
+        if (kind == "empty_room" && (vs->ambient.empty() || vs->waitingEmpty)) return true;
+        if (kind == "mutated_waiting") {
+            bool anyStill = false;
+            for (auto& a : vs->ambient) if (!a.walking && !a.leaving) anyStill = true;
+            if (!anyStill || vs->waitingEmpty) return true;
+        }
+    }
+    if (kind == "lights_office" && office.lightsManuallyOff) return true;
     // room flags are booleans: a live same-kind entry already owns the door
     // figure / banging / lights-out state, so a second pure-flag def adds
     // nothing. Combo defs (flag + furni delta) still count through their
@@ -300,7 +314,7 @@ void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
         bool live = false;
         for (auto& a : active) if (a.id == id) live = true;
-        if (!used && !live && !TargetWatched(d, office) && !Undetectable(d, office) &&
+        if (!used && !live && !TargetWatched(d, office) && !Undetectable(d, office, &vs) &&
             JF(d, "instab", 1.f) <= sevCap)
             pool.push_back(&d);
     }
@@ -569,7 +583,8 @@ void AnomalyDirector::DropKind(const std::string& kind) {
 
 // spawn a def by KIND (figure_at_door, lights_office, banging_window...) -
 // used by phone-call outcome effects and dev hooks
-bool AnomalyDirector::DebugForceKind(const std::string& kind, Office& office) {
+bool AnomalyDirector::DebugForceKind(const std::string& kind, Office& office,
+                                     VisitorSystem* vs) {
     for (auto& a : active) if (a.kind == kind) return false;   // already live
     auto tryList = [&](const json& list, const char* ch) -> bool {
         for (auto& d : list) {
@@ -590,6 +605,7 @@ bool AnomalyDirector::DebugForceKind(const std::string& kind, Office& office) {
             lastSpawnChannel = ch;
             TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=%s target=%s",
                      a.id.c_str(), a.kind.c_str(), ch, tgt.empty() ? "-" : tgt.c_str());
+            if (vs) ApplyExteriorFlags(office, *vs);
             return true;
         }
         return false;
@@ -672,15 +688,15 @@ void AnomalyDirector::TriggerEffect(const json& fx, Office& office, VisitorSyste
     if (fx.contains("relief")) AddInstability(-JF(fx, "relief", 6));
     if (fx.contains("figure")) {
         std::string w = JS(fx, "figure");
-        DebugForceKind("figure_" + w, office);
+        DebugForceKind("figure_" + w, office, &vs);
     }
     if (fx.contains("lights")) {
         std::string w = JS(fx, "lights");
-        DebugForceKind(w == "office" ? "lights_office" : "lights_out", office);
+        DebugForceKind(w == "office" ? "lights_office" : "lights_out", office, &vs);
     }
     if (fx.contains("banging")) {
         std::string w = JS(fx, "banging");
-        DebugForceKind(w == "window" ? "banging_window" : "banging_door", office);
+        DebugForceKind(w == "window" ? "banging_window" : "banging_door", office, &vs);
     }
     ApplyExteriorFlags(office, vs);
 }

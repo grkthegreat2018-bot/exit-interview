@@ -114,6 +114,9 @@ public:
     float lampDim = 1.f;        // office light fixtures dim with the flicker level
     bool drawerOpen = false;    // anomaly: desk drawer pulled itself out
     float drawerT = 0.f;        // drawer slide-out amount 0..1 (animated by game.cpp)
+    bool lightsManuallyOff = false;  // player flipped the wall switch - a
+                                     // lights_office spawn on top would be
+                                     // invisible, so the director checks this
 
     Color wallC{72, 70, 78, 255}, floorC{38, 34, 36, 255}, ceilC{30, 30, 34, 255},
           monitorGlow{150, 200, 235, 255};

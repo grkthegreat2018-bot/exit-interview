@@ -59,7 +59,8 @@ public:
     void DropId(const std::string& id);                 // erase one active entry, no relief/fx
     void DropKind(const std::string& kind);             // erase all active entries of a kind
     void DebugForceOffice(const std::string& id, Office& office);   // EI_ dev hooks
-    bool DebugForceKind(const std::string& kind, Office& office);   // spawn exterior/office def by kind
+    bool DebugForceKind(const std::string& kind, Office& office,
+                        VisitorSystem* vs = nullptr);   // spawn def by kind; vs applies room flags
     void DebugCallEvent(const json& ev);                            // dev hook: ring the desk phone now
 
     // freeform (LLM) anomaly plumbing - off when the player picks scripted-only
@@ -128,7 +129,8 @@ private:
     float NightScale(const char* key, float dflt) const;    // per-night array by (night-1)
     int NightUnlock(const char* key, int dflt) const;       // scalar gate
     bool TargetWatched(const json& d, Office& office) const;
-    bool Undetectable(const json& d, Office& office) const; // ghost-anomaly guard
+    bool Undetectable(const json& d, Office& office,
+                      const VisitorSystem* vs = nullptr) const; // ghost-anomaly guard
     void SpawnOffice(Office& office);
     void SpawnExterior(Office& office, VisitorSystem& vs);
     void SpawnVisitorCorruption(VisitorSystem& vs);

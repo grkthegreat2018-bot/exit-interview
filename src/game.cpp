@@ -334,7 +334,7 @@ bool Game::Init() {
     if (const char* fa = std::getenv("EI_ANOM"))  // dev hook: force-spawn an office anomaly
         ad.DebugForceOffice(fa, office);
     if (const char* fk = std::getenv("EI_KIND"))  // dev hook: force-spawn any def by kind
-        ad.DebugForceKind(fk, office);
+        ad.DebugForceKind(fk, office, &vs);
     if (const char* ap = std::getenv("EI_APP")) {  // dev: pin a monitor app open
         if (!std::strcmp(ap, "book"))      os.app = FakeOS::App::Appointments;
         else if (!std::strcmp(ap, "phone"))    os.app = FakeOS::App::Phone;
@@ -640,7 +640,7 @@ void Game::ExecSeq(const std::string& c) {
     } else if (op == "anom") {
         ad.DebugForceOffice(arg.c_str(), office);
     } else if (op == "kind") {
-        ad.DebugForceKind(arg.c_str(), office);
+        ad.DebugForceKind(arg.c_str(), office, &vs);
     } else if (op == "call") {
         if (A.anomalies.contains("call_events"))
             ad.DebugCallEvent(A.anomalies["call_events"][0]);
@@ -1300,6 +1300,7 @@ void Game::UpdateCommon(float dt) {
     }
 
     int anomsBefore = ad.ActiveCount();
+    office.lightsManuallyOff = manualLightsOff;   // spawn guard reads this
     ad.Update(dt, gameHour, office, vs,
               [this](const std::string& s) { Notify(s); },
               [this] { OnIntruderStrike(); });
@@ -1517,7 +1518,7 @@ void Game::UpdateCommon(float dt) {
             if (!doorThreat)
                 // ...and it left the glass in pieces: stays live until
                 // Facilities is called out to repair it
-                ad.DebugForceKind("broken_window", office);
+                ad.DebugForceKind("broken_window", office, &vs);
             audio.Play(AudioBank::Sfx::Stinger, 0.7f);
         }
     } else {
@@ -1668,7 +1669,7 @@ void Game::UpdateTutorial(float dt) {
         case 5:   // an accepted report sends maintenance in - the id check
                   // keeps a mid-lesson save/load from deadlocking the script
             if (deeds["report_filed"] > 0 || !ad.IdLive("mug_moved")) {
-                ad.DebugForceKind("lights_out", office);
+                ad.DebugForceKind("lights_out", office, &vs);
                 say(line("facilities", "Confirmed - crew on the way. Now the waiting room lights just died. Look through the door, then PHONE > FACILITIES."),
                     12.f);
                 tutStep = 6;

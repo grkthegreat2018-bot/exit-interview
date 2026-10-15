@@ -154,11 +154,19 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   anomaly per target (a second change hides inside the first), one live
   flag per kind unless the def has its own visible mutation half, no
   no-op mutations (pos_set to the same spot, tint it already wears), no
-  mutating hidden/missing furni. Every spawn logs `[anomaly] spawned
+  mutating hidden/missing furni. State-dependent kinds are refused while
+  their effect would be invisible: `empty_room` needs ambient NPCs present
+  to evacuate (the waiting room starts empty; arrivals begin ~15s in),
+  `mutated_waiting` needs at least one ambient that isn't already walking
+  or leaving, and `lights_office` won't roll while the player already has
+  the lights off (`office.lightsManuallyOff` syncs from the manual switch
+  each frame). Every spawn logs `[anomaly] spawned
   <id> kind=<k> channel=<c> target=<t>`, and the spawn cue steers by
   `ad.LastSpawnChannel()`: exterior -> "past the door", visitor ->
   "about them", intruder -> "got inside", phone calls announce
-  themselves by ringing (no generic cue).
+  themselves by ringing (no generic cue). `DebugForceKind` now applies
+  exterior flags itself (takes VisitorSystem*) - forced figure/lights/
+  mutated spawns actually render, which they never did before.
 - Interview endings are LLM-judged: a Seated->Leaving edge with player
   lines submits the transcript as purpose `intervieweval`; the verdict
   lands in `ivEvals` and is consumed in PollLLM - match credits
