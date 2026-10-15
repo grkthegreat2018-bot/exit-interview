@@ -984,6 +984,12 @@ void Game::UpdateRoam(float dt) {
                   JF(Cfg()["game"], "sprint_mul", 1.6f),
                   JF(Cfg()["game"], "crouch_height", 0.55f), keys);
     player.hiding = underDesk && player.crouching;   // danger events miss you here
+    // FP-body walk phase rides bobT exactly - the footstep sfx fires on
+    // sin(bobT) zero-crossings, so legs land ON their steps (and bobT's
+    // cadence already encodes walk/sprint/crouch speed). While idle the
+    // phase freewheels slowly so the chest keeps breathing
+    if (player.moving) fpStepT = player.bobT;
+    else fpStepT += dt * 0.55f;
 
     // find interactable
     interactTarget = nullptr;
@@ -1955,17 +1961,25 @@ void Game::DrawPlayerBody() {
     // downward view and the legs/feet recede past it to the bottom edge
     // instead of hiding behind the chest-top face. The crouch pose is
     // already tucked - the lean would pitch knees into the camera, skip it
+    // sprint leans the whole body a few extra degrees - the tucked-chin
+    // pitch sells the speed alongside the wider fov
     bool lean = !crouch;
+    float leanDeg = -20.f - 7.f * player.moveAmt * (player.sprinting ? 1.f : 0.f);
     if (lean) {
         rlPushMatrix();
         float pivY = at.y + 0.95f * fp.height;
         rlTranslatef(at.x, pivY, at.z);
-        rlRotatef(-20.f, std::cos(yr), 0.f, -std::sin(yr));
+        rlRotatef(leanDeg, std::cos(yr), 0.f, -std::sin(yr));
         rlTranslatef(-at.x, -pivY, -at.z);
     }
+    // stride phase is bobT-locked (footsteps land on the swing) and the
+    // amplitude follows speed: sprint throws the full cycle, the crouch-
+    // shuffle stays small under the tucked pose
+    float wAmt = player.moveAmt * (player.sprinting ? 1.15f :
+                                   crouch ? 0.55f : 0.9f);
     DrawHumanoid(at, player.yaw, fp, crouch,
-                 player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
-                 player.moving ? 0.8f : 0.f, 0.f, {}, true);
+                 fpStepT, 0.f, crouch ? 0.30f : 0.5f,
+                 wAmt, 0.f, {}, true);
     if (lean) rlPopMatrix();
 }
 
