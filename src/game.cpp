@@ -30,6 +30,8 @@ bool Game::Init() {
     ad.Init(A.anomalies, Cfg()["instability"]);
     ad.SetParts(A.anomalyParts);
     ad.seenFn = [this](Vector3 p) { return PlayerSees(p); };
+    ad.loreSeen = &loreSeen;       // director prefers callers never met
+    vs.loreSeen = &loreSeen;       // book injection prefers personas never met
     audio.Init();
 
     cam.up = {0.f, 1.f, 0.f};
@@ -112,7 +114,9 @@ bool Game::Init() {
     dlg.onSay = [this](const std::string& t) { SayToVisitor(t); };
     phoneDlg.onSay = [this](const std::string& t) { PhoneSay(t); };
     phoneDlg.onEnd = [this] { HangUpPhone(); };
-    dlg.onEnd = [this] { vs.EndInterview(); dlg.Reset(); deeds["interview_done"]++; Notify("Interview ended."); };
+    // no instant credit here: the leave-edge submits the transcript to the
+    // intervieweval job, and only a judged-clean wrap-up earns interview_done
+    dlg.onEnd = [this] { vs.EndInterview(); dlg.Reset(); Notify("Interview ended."); };
 
     saveExists = FileExists(JS(Cfg(), "save_file", "save.json").c_str());
 
@@ -481,12 +485,20 @@ void Game::NewShift(bool fromSave) {
         {
             int slotCap = 999, formCap = 999;
             auto arrV = Cfg()["game"].value("visitor_slots_by_night", json::array());
-            if (night - 1 < (int)arrV.size() && arrV[night - 1].is_number())
+            if (night >= 1 && night - 1 < (int)arrV.size() && arrV[night - 1].is_number())
                 slotCap = arrV[night - 1].get<int>();
             auto arrF = Cfg()["game"].value("paper_forms_by_night", json::array());
-            if (night - 1 < (int)arrF.size() && arrF[night - 1].is_number())
+            if (night >= 1 && night - 1 < (int)arrF.size() && arrF[night - 1].is_number())
                 formCap = arrF[night - 1].get<int>();
+            if (night == 0) { slotCap = 999; formCap = 0; }   // training: scripted book, no forms
             vs.SetSlotCap(slotCap);
+            // anomalous bookings are capped per night too - the stock book
+            // fronts 4 of 6 slots as anomalies on night 1, which is how new
+            // players ate four releases before learning the escort call
+            auto arrA = Cfg()["instability"]["night_scaling"].value("max_anomalous_slots", json::array());
+            if (night >= 1 && night - 1 < (int)arrA.size() && arrA[night - 1].is_number())
+                vs.SetAnomalyCap(arrA[night - 1].get<int>());
+            else vs.SetAnomalyCap(999);
             if (paperForms.is_array() && (int)paperForms.size() > formCap)
                 paperForms.erase(paperForms.begin() + formCap, paperForms.end());
         }
@@ -515,6 +527,7 @@ void Game::NewShift(bool fromSave) {
     autoEndT = -1.f; earlyEndT = -1.f; doorRattle = 0.f;
     loreText.clear(); loreCardT = 0;
     workCallT = JF(Cfg()["instability"], "work_call_first_sec", 45.f);
+    if (night == 0) workCallT = 1e9f;   // training shift: no mundane phone noise
     paperIdx = 0;
     player.crouching = player.forcedCrouch = player.hiding = false;
     player.pitch = 0;
@@ -524,6 +537,7 @@ void Game::NewShift(bool fromSave) {
     ad.night = night;
     vs.night = night;
     tutSeen.clear();
+    tutStep = (night == 0) ? 0 : -1;   // night 0 runs the scripted lesson plan
     mode = Mode::Roam;
     DisableCursor();
     Notify("Shift started. Survive until " + FmtClock(JF(Cfg()["game"], "shift_end_hour", 30)) + ".");
@@ -607,6 +621,8 @@ void Game::ExecSeq(const std::string& c) {
         manualLightsOff = !manualLightsOff;
     } else if (op == "say") {
         if (!arg.empty()) SayToVisitor(arg);
+    } else if (op == "end") {      // END INTERVIEW button equivalent
+        if (vs.VisitorSeated()) vs.EndInterview();
     } else if (op == "app") {
         std::string a = ToLower(arg);
         os.app = a == "report" ? FakeOS::App::Report :
@@ -615,6 +631,12 @@ void Game::ExecSeq(const std::string& c) {
                  a == "phone" ? FakeOS::App::Phone :
                  a == "paper" ? FakeOS::App::Paperwork :
                  a == "building" ? FakeOS::App::Building : FakeOS::App::None;
+    } else if (op == "report") {   // exercises the real REPORT pipeline end to end
+        SubmitReport(arg.empty() ? "the mug moved" : arg);
+    } else if (op == "fac") {      // PHONE > FACILITIES, verbatim description
+        CallFacilities(arg.empty() ? "the lights" : arg);
+    } else if (op == "sec") {      // PHONE > SECURITY > intruder|anomaly
+        CallSecurity(arg.empty() ? "intruder" : arg);
     } else if (op == "anom") {
         ad.DebugForceOffice(arg.c_str(), office);
     } else if (op == "kind") {
@@ -664,13 +686,26 @@ void Game::DoInteract() {
         else { audio.Play(AudioBank::Sfx::Click, 0.4f); Notify("Just a dial tone."); }
     } else if (it == "note") {
         // a slid-in / misplaced note is readable - lore slips delivered by
-        // whoever keeps writing them
+        // whoever keeps writing them. Unseen slips surface first so the set
+        // completes across replays; re-reads show the text but don't re-score
         auto& pool = A.dialogs["lore_notes"];
-        loreText = pool.is_array() && !pool.empty()
-            ? pool[RandInt(0, (int)pool.size() - 1)].get<std::string>()
-            : std::string("the building keeps what it takes.");
-        loreCardT = 16.f;
-        deeds["lore_found"]++;
+        if (pool.is_array() && !pool.empty()) {
+            std::vector<int> fresh;
+            for (int i = 0; i < (int)pool.size(); i++)
+                if (!loreSeen.count("note_" + std::to_string(i))) fresh.push_back(i);
+            int idx = fresh.empty() ? RandInt(0, (int)pool.size() - 1)
+                                    : fresh[RandInt(0, (int)fresh.size() - 1)];
+            std::string lid = "note_" + std::to_string(idx);
+            loreText = pool[idx].get<std::string>();
+            loreCardT = 16.f;
+            if (loreSeen.insert(lid).second) {
+                deeds["lore_found"]++;
+                SaveSettings();   // the collection persists immediately
+            }
+        } else {
+            loreText = "the building keeps what it takes.";
+            loreCardT = 16.f;
+        }
         audio.Play(AudioBank::Sfx::TypeTick, 0.5f);
     } else if (it == "door") {
         if (vs.VisitorAtDoor()) {
@@ -887,7 +922,10 @@ void Game::UpdateRoam(float dt) {
     Vector3 eye = player.Eye(), fwd = player.Forward();
     float bestT = JF(Cfg()["game"], "interact_distance", 2.6f);
     for (auto& f : office.items) {
-        if (f.interact.empty() || f.room != "office") continue;
+        if (f.interact.empty()) continue;
+        // notes are readable wherever they slide in (waiting room included) -
+        // other interactions stay office-side
+        if (f.room != "office" && f.interact != "note") continue;
         // a ringing handset can still be found in the dark even if the
         // phone prop "vanished" - otherwise an unanswered call is unfair
         if (f.hidden && !(phone.ringing && f.interact == "phone")) continue;
@@ -1158,13 +1196,47 @@ void Game::UpdateCommon(float dt) {
     {
         VState vst = vs.Cur().state;
         if (vst == VState::ToDoor && lastVState != VState::ToDoor) askedCur = false;
+        // a lore persona in the chair is met the moment they sit - collecting
+        // them feeds the prefer-unseen pick so the cast reveals itself
+        if (vst == VState::Seated && lastVState == VState::ToChair && vs.Cur().person) {
+            std::string pid = JS(*vs.Cur().person, "id");
+            if (pid.rfind("lore_", 0) == 0 && loreSeen.insert(pid).second) {
+                deeds["lore_found"]++;
+                SaveSettings();
+            }
+        }
         if (lastVState == VState::Seated && (vst == VState::Leaving || vst == VState::Gone) &&
-            !askedCur && vs.Cur().anomaly.empty()) {
-            deeds["visitor_missed"]++;
-            Notify("WARNING ISSUED - " + vs.Cur().Name() +
-                   " left without a proper interview. It goes on your record.");
-            notes.back().second = 10.f;
-            audio.Play(AudioBank::Sfx::Buzz, 0.55f);
+            vs.Cur().anomaly.empty() && !vs.Cur().escorted) {
+            // did that interview actually conclude? An empty room says yes to
+            // the miss instantly; anything with real back-and-forth goes to
+            // the eval - natural goodbyes and typed dismissals count as a
+            // proper ending, not a write-up
+            int playerLines = 0;
+            for (auto& t : vs.transcript) if (t.first == "You") playerLines++;
+            if (playerLines == 0) {
+                deeds["visitor_missed"]++;
+                TraceLog(LOG_INFO, "[interview] %s left with zero interviewer lines -> visitor_missed",
+                         vs.Cur().Name().c_str());
+                Notify("WARNING ISSUED - " + vs.Cur().Name() +
+                       " left without a proper interview. It goes on your record.");
+                notes.back().second = 10.f;
+                audio.Play(AudioBank::Sfx::Buzz, 0.55f);
+            } else {
+                std::string convo;
+                for (auto& [s, tx] : vs.transcript)
+                    convo += (s == "You" ? "Interviewer" : s) + ": " + tx + "\n";
+                LLMClient::Request r;
+                r.purpose = "intervieweval";
+                r.systemPrompt =
+                    "You are judging whether an exit interview was properly concluded. "
+                    "Reply ONLY with JSON {\"match\":true/false,\"feedback\":\"one short sentence\"}. "
+                    "match=true means the interviewer engaged the visitor AND the conversation "
+                    "reached a clear end - a farewell, a dismissal, a wrap-up, or the visitor's "
+                    "own goodbye. match=false means the visitor left mid-conversation, was "
+                    "dismissed without acknowledgment, or was never really interviewed.";
+                r.user = convo;
+                ivEvals.push_back({llm.Submit(r), vs.Cur().Name()});
+            }
         }
         // ...but an anomalous one who talked their way through the interview
         // and walked out under their own power is worse. It only registers
@@ -1172,10 +1244,22 @@ void Game::UpdateCommon(float dt) {
         if (lastVState == VState::Leaving && vst == VState::Gone &&
             !vs.Cur().anomaly.empty() && !vs.Cur().escorted) {
             deeds["anomaly_released"]++;
-            ad.AddInstability(JF(Cfg()["instability"], "release_instab", 14.f));
-            Notify("LOGGING ERROR - " + vs.Cur().Name() +
-                   " was never cleared to leave. Your signature let it out.");
-            notes.back().second = 10.f;
+            // early nights hit softer - the mechanic has to be learned, and a
+            // first-shift player can't know the escort call exists yet
+            float relMul = 1.f;
+            auto arr = Cfg()["instability"]["night_scaling"].value("release_instab_mul", json::array());
+            if (night >= 1 && night - 1 < (int)arr.size() && arr[night - 1].is_number())
+                relMul = arr[night - 1].get<float>();
+            else if (night == 0) relMul = 0.3f;   // training wheels
+            ad.AddInstability(JF(Cfg()["instability"], "release_instab", 14.f) * relMul);
+            TraceLog(LOG_INFO, "[release] %s walked out anomalous -> instab +%.1f (mul %.2f)",
+                     vs.Cur().Name().c_str(), JF(Cfg()["instability"], "release_instab", 14.f) * relMul, relMul);
+            std::string msg = "LOGGING ERROR - " + vs.Cur().Name() +
+                              " was never cleared to leave. Your signature let it out.";
+            if (deeds["anomaly_released"] == 1)   // the first one teaches the fix
+                msg += " Next time: PHONE > SECURITY > INTRUDER while they're seated.";
+            Notify(msg);
+            notes.back().second = 12.f;
             audio.Play(AudioBank::Sfx::Stinger, 0.55f);
         }
         lastVState = vst;
@@ -1241,6 +1325,7 @@ void Game::UpdateCommon(float dt) {
         if (vs.VisitorSeated()) Tut("sit", "Sit at your desk [" + std::string(KeyName(keys.interact)) + "] to interview. [" + KeyName(keys.swap) + "] swaps between monitor and visitor.");
         if (ad.Instability() > 30.f) Tut("paper", "Terminal > PAPERWORK: filing a form holds the building still for a while.");
     }
+    if (tutStep >= 0) UpdateTutorial(dt);
     UpdateCrew(dt);
     // anomaly move glides: the object scrapes into its new spot over ~0.6s
     // (each fresh one lands with a screech + a flinch, once)
@@ -1518,6 +1603,98 @@ void Game::UpdateCommon(float dt) {
 }
 
 
+// ---------- night 0: scripted orientation ----------
+// Two appointments and two anomalies, fired by hand - every step gates on
+// what the PLAYER did, so a slow reader can't lose the thread and a fast
+// one can't break it. Scripted fires reuse the real anomaly defs, so the
+// channels it teaches are the real ones (REPORT app, PHONE > FACILITIES,
+// PHONE > SECURITY). The dice-driven scheduler is parked for the night.
+void Game::UpdateTutorial(float dt) {
+    // copy lives in dialogs.json "tutorial" for tuning; literals keep a
+    // stripped assets dir playable
+    auto line = [&](const char* k, const char* fb) -> std::string {
+        std::string s = A.dialogs.contains("tutorial") ? JS(A.dialogs["tutorial"], k) : "";
+        return s.empty() ? std::string(fb) : s;
+    };
+    auto say = [&](const std::string& m, float secs) {
+        Notify(m);
+        notes.back().second = secs;
+    };
+    (void)dt;
+    switch (tutStep) {
+        case 0:   // cold open - the book is the job
+            say(line("welcome", "ORIENTATION SHIFT. Two appointments are on the book tonight. When someone knocks, let them in."),
+                11.f);
+            audio.Play(AudioBank::Sfx::TypeTick, 0.4f);
+            tutStep = 1;
+            break;
+        case 1:   // first appointment reaches the door
+            if (vs.VisitorAtDoor() || vs.VisitorSeated() ||
+                vs.Cur().state == VState::ToChair) {
+                say(line("door", "Someone's at the door. Open it and they'll see themselves in."), 9.f);
+                tutStep = 2;
+            }
+            break;
+        case 2:   // seated - run the interview
+            if (vs.VisitorSeated()) {
+                say(line("sit", "Sit at your desk and ask them something. The RECORD app on the terminal has their file."),
+                    10.f);
+                tutStep = 3;
+            }
+            break;
+        case 3:   // engaged - now end it properly
+            if (askedCur) {
+                say(line("wrap", "That's an interview. When you're satisfied, END INTERVIEW - or just tell them they can go."),
+                    10.f);
+                tutStep = 4;
+            } else if (!vs.HasActiveVisitor()) {
+                tutStep = 4;   // they left anyway - the warning teaches the rest
+            }
+            break;
+        case 4:   // alone again - the room misbehaves
+            if (!vs.HasActiveVisitor()) {
+                ad.DebugForceOffice("mug_moved", office);
+                say(line("report", "While you weren't watching, something moved on your desk. File a REPORT at the terminal - describe what changed."),
+                    12.f);
+                tutStep = 5;
+            }
+            break;
+        case 5:   // an accepted report sends maintenance in - the id check
+                  // keeps a mid-lesson save/load from deadlocking the script
+            if (deeds["report_filed"] > 0 || !ad.IdLive("mug_moved")) {
+                ad.DebugForceKind("lights_out", office);
+                say(line("facilities", "Confirmed - crew on the way. Now the waiting room lights just died. Look through the door, then PHONE > FACILITIES."),
+                    12.f);
+                tutStep = 6;
+            }
+            break;
+        case 6:   // fixed - the next booking is wrong on purpose
+            if (!ad.HasKind("lights_out")) {
+                vs.CallNextEarly(office);
+                say(line("security", "Handled. One more appointment is coming - check their file against what they tell you. If it doesn't match: PHONE > SECURITY > INTRUDER."),
+                    12.f);
+                tutStep = 7;
+            }
+            break;
+        case 7:   // the wrong appointment takes a seat
+            if (vs.VisitorSeated()) {
+                say(line("record", "Sit. Interview them like anyone else - but read their file in RECORD. If the story and the paperwork disagree, they are not your appointment."),
+                    12.f);
+                tutStep = 8;
+            }
+            break;
+        case 8:   // however it ended, the book decides when the night does
+            if (!vs.HasActiveVisitor()) {
+                say(line("done", "That's the whole job: clear the book, keep the room honest, last to 6 AM. An empty book clocks you out early."),
+                    12.f);
+                tutStep = 9;
+            }
+            break;
+        default: break;   // lesson plan over - the clock runs like any night
+    }
+}
+
+
 // ---------- draw ----------
 
 // Projects the monitor face to screen space and draws the live OS texture.
@@ -1766,7 +1943,7 @@ void Game::Run() {
                     if (IsKeyPressed(KEY_ENTER) && !focusApiKey && !editId) NewShift(false);
                     else if (saveExists && IsKeyPressed(KEY_C) && !focusApiKey) { if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); } }
                     else if (IsKeyPressed(KEY_Q) && !focusApiKey) { quit = true; }
-                    else if (IsKeyPressed(KEY_R) && !focusApiKey && night > 1) { night = 1; SaveSettings(); }
+                    else if (IsKeyPressed(KEY_R) && !focusApiKey && night != 1) { night = 1; SaveSettings(); }   // wipe record, or skip training on 0
                 }
                 break;
             }

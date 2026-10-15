@@ -863,5 +863,17 @@
     "badge": true
    }
   }
+ ],
+ "tutorial_schedule": [
+  {
+   "time": 18.1,
+   "visitor": "d_voss",
+   "anomaly": null
+  },
+  {
+   "time": 29.6,
+   "visitor": "j_reyes",
+   "anomaly": "record_mismatch"
+  }
  ]
 }

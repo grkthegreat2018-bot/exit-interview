@@ -25,25 +25,32 @@ json AnomalyDirector::PickTier() const {
 }
 
 void AnomalyDirector::AddInstability(float v) {
-    instab = std::clamp(instab + v, 0.f, JF(cfg, "max", 100.f));
+    // night 0 is training - mistakes still sting, but the meter can never
+    // reach the termination threshold
+    float cap = night == 0 ? 85.f : JF(cfg, "max", 100.f);
+    instab = std::clamp(instab + v, 0.f, cap);
+}
+
+// per-night difficulty scales: later nights drain faster and spawn sooner.
+// `key` names an array in cfg["night_scaling"] indexed by (night-1).
+float AnomalyDirector::NightScale(const char* key, float dflt) const {
+    auto& ns = cfg["night_scaling"];
+    if (!ns.contains(key) || !ns[key].is_array() || ns[key].empty()) return dflt;
+    auto& arr = ns[key];
+    int i = std::clamp(night - 1, 0, (int)arr.size() - 1);
+    return arr[i].get<float>();
+}
+int AnomalyDirector::NightUnlock(const char* key, int dflt) const {
+    auto& ns = cfg["night_scaling"];
+    return ns.contains(key) ? (int)JF(ns, key, (float)dflt) : dflt;
 }
 
 void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSystem& vs,
                              const std::function<void(const std::string&)>& notify,
                              const std::function<void()>& onIntruderStrike) {
     elapsed += dt;
-    // per-night difficulty scales: later nights drain faster and spawn sooner
-    auto nightScale = [&](const char* key, float dflt) {
-        auto& ns = cfg["night_scaling"];
-        if (!ns.contains(key)) return dflt;
-        auto& arr = ns[key];
-        int i = std::clamp(night - 1, 0, (int)arr.size() - 1);
-        return arr[i].get<float>();
-    };
-    auto nightUnlock = [&](const char* key, int dflt) {
-        auto& ns = cfg["night_scaling"];
-        return ns.contains(key) ? (int)JF(ns, key, (float)dflt) : dflt;
-    };
+    auto nightScale = [&](const char* key, float dflt) { return NightScale(key, dflt); };
+    auto nightUnlock = [&](const char* key, int dflt) { return NightUnlock(key, dflt); };
     if (freezeT > 0.f) {
         freezeT -= dt;   // filed paperwork: instability held, nothing moves
     } else {
@@ -58,7 +65,7 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
             for (auto& a : active) rate += a.instab;
             instab += tick * rate * dt * 60.f;
         }
-        instab = std::clamp(instab, 0.f, JF(cfg, "max", 100.f));
+        instab = std::clamp(instab, 0.f, night == 0 ? 85.f : JF(cfg, "max", 100.f));
     }
 
     // intruder countdown - a broken line of defence collapses the search
@@ -74,9 +81,19 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
         }
     }
 
-    // spawn scheduler
+    // spawn scheduler - night 0 runs a scripted lesson plan instead: the
+    // tutorial machine fires anomalies itself, nothing rolls here
+    if (night == 0) { ApplyExteriorFlags(office, vs); return; }
     nextSpawnIn -= dt;
     if (nextSpawnIn <= 0) {
+        // hard cap on live anomalies: without it a bad streak at a hot tier
+        // snowballs (more actives -> faster instab -> faster spawns -> dead
+        // by math, not by play). Saturated rooms re-check soon instead of
+        // taking a whole interval off.
+        int cap = (int)nightScale("max_concurrent", 99.f);
+        if ((int)active.size() >= cap) {
+            nextSpawnIn = 14.f;
+        } else {
         json tier = PickTier();
         auto iv = tier["spawn_interval_sec"];
         // later nights: anomalies arrive faster
@@ -102,15 +119,28 @@ void AnomalyDirector::Update(float dt, float gameHour, Office& office, VisitorSy
         else if (pick == "visitor") SpawnVisitorCorruption(vs);
         else if (pick == "intruder") SpawnIntruder(office);
         else if (pick == "call") {
-            // the desk phone rings - persona picked now, Game handles the call
-            if (freeform && pendingCall.is_null() && defs.contains("call_events") &&
-                !defs["call_events"].empty() && !HasKind("phone_call"))
-                DebugCallEvent(defs["call_events"][RandInt(0, (int)defs["call_events"].size() - 1)]);
+            // the desk phone rings - persona picked now, Game handles the call.
+            // Stock call_events are scripted content - they ring even under
+            // ANOM: SCRIPTED; only LLM-authored callgen_* personas stay gated.
+            if (pendingCall.is_null() && defs.contains("call_events") &&
+                !defs["call_events"].empty() && !HasKind("phone_call")) {
+                std::vector<const json*> pool, fresh;
+                for (auto& e : defs["call_events"]) {
+                    if (JS(e, "id").rfind("callgen_", 0) == 0 && !freeform) continue;
+                    pool.push_back(&e);
+                    if (loreSeen && !loreSeen->count(JS(e, "id"))) fresh.push_back(&e);
+                }
+                // unseen callers first - the phone book reveals itself over runs
+                auto& pl = fresh.empty() ? pool : fresh;
+                if (!pl.empty()) DebugCallEvent(*pl[RandInt(0, (int)pl.size() - 1)]);
+                else SpawnOffice(office);
+            }
             else SpawnOffice(office);
         }
         else if (pick == "remix") {
             if (freeform && !remixPending) remixPending = true;   // Game submits the LLM job
             else SpawnOffice(office);
+        }
         }
     }
 
@@ -136,13 +166,18 @@ bool AnomalyDirector::TargetWatched(const json& d, Office& office) const {
 }
 
 void AnomalyDirector::SpawnOffice(Office& office) {
+    // severity ceiling per night: night 1 learns the loop on quiet oddities,
+    // the loud/violent kinds join later (they also drain harder, so an early
+    // heavy spawn is a difficulty spike AND a fairness problem)
+    float sevCap = NightScale("max_instab_per_spawn", 99.f);
     std::vector<const json*> pool;
     for (auto& d : defs["office"]) {
         std::string id = JS(d, "id");
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
         bool live = false;
         for (auto& a : active) if (a.id == id) live = true;
-        if (!used && !live && !TargetWatched(d, office)) pool.push_back(&d);
+        if (!used && !live && !TargetWatched(d, office) && JF(d, "instab", 1.f) <= sevCap)
+            pool.push_back(&d);
     }
     if (pool.empty()) return;
     const json& d = *pool[RandInt(0, (int)pool.size() - 1)];
@@ -166,6 +201,7 @@ void AnomalyDirector::SpawnOffice(Office& office) {
 }
 
 void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
+    float sevCap = NightScale("max_instab_per_spawn", 99.f);
     std::vector<const json*> pool;
     for (auto& d : defs["exterior"]) {
         if (d.value("breach_only", false)) continue;   // only spawned by a breach
@@ -173,7 +209,8 @@ void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
         bool live = false;
         for (auto& a : active) if (a.id == id) live = true;
-        if (!used && !live && !TargetWatched(d, office)) pool.push_back(&d);
+        if (!used && !live && !TargetWatched(d, office) && JF(d, "instab", 1.f) <= sevCap)
+            pool.push_back(&d);
     }
     if (pool.empty()) { SpawnOffice(office); return; }
     const json& d = *pool[RandInt(0, (int)pool.size() - 1)];
@@ -231,7 +268,8 @@ void AnomalyDirector::SpawnVisitorCorruption(VisitorSystem& vs) {
 void AnomalyDirector::SpawnIntruder(Office& office) {
     if (intruderActive || office.intruderSpawns.empty()) return;
     intruderActive = true;
-    intruderT = JF(defs["intruder"], "grace_sec", 22.f);
+    // config instability.intruder_grace_sec wins; anomalies.json is the fallback
+    intruderT = JF(cfg, "intruder_grace_sec", JF(defs["intruder"], "grace_sec", 22.f));
     intruderPos = office.intruderSpawns[RandInt(0, (int)office.intruderSpawns.size() - 1)];
     ActiveAnomaly a;
     a.id = "intruder";
@@ -298,6 +336,14 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
         // where the crew should stand to fix this
         o.workPos = (channel == "exterior") ? Vector3{0, 0, -8.4f} : Vector3{0.9f, 0, 0.4f};
         if (o.hadTarget) o.workPos = office.Find(o.targetId) ? office.Find(o.targetId)->pos : it->snapshot.pos;
+        // riders are whoever sits on the host's top RIGHT NOW (they rode the
+        // mutation over). Captured once by id - re-testing RestsOn against a
+        // moving host every frame lets it grab passers-by mid-sweep and drag
+        // them to the destination (the mouse "carrying" the keyboard bug)
+        if (o.hadTarget)
+            if (Furni* hf = office.Find(o.targetId))
+                for (auto& it2 : office.items)
+                    if (office.RestsOn(it2, *hf)) o.riderIds.push_back(it2.id);
         else if (!o.spawnedId.empty()) { if (Furni* f = office.Find(o.spawnedId)) o.workPos = f->pos; }
         else if (o.kind.rfind("figure", 0) == 0) o.workPos = vs.figurePos;
         else if (o.kind == "banging_door" || o.kind == "banging_window") o.workPos = vs.bangerPos;
@@ -326,6 +372,10 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
         if (deferFx && (channel == "exterior" || !o.kind.empty())) pending.push_back(*it);
         exhausted.push_back(it->id);
         active.erase(it);
+        // breathing room after a catch: at hot tiers the raw interval can be
+        // ~30s, which chains scares back-to-back. A guaranteed beat of quiet
+        // makes each anomaly land and keeps long nights survivable.
+        nextSpawnIn = std::max(nextSpawnIn, NightScale("resolve_calm_sec", 0.f));
         AddInstability(-JF(cfg, "success_relief", 4.f));
         ApplyExteriorFlags(office, vs);
         return o;
@@ -337,12 +387,12 @@ void AnomalyDirector::ApplyResolveFx(const ResolveOutcome& o, Office& office) {
     if (o.hadTarget)
         if (Furni* f = office.Find(o.targetId)) {
             // riders carried along by a translate/pos_set (levitating desk's
-            // monitor/phone/papers) come back with the host - they still rest
-            // on its moved top, so shift them by the restore delta
+            // monitor/phone/papers) come back with the host - shift exactly
+            // the ids captured at BeginResolve, by the restore delta
             Vector3 d{o.snapshot.pos.x - f->pos.x, o.snapshot.pos.y - f->pos.y,
                       o.snapshot.pos.z - f->pos.z};
-            for (auto& it : office.items)
-                if (office.RestsOn(it, *f)) it.pos = Vector3Add(it.pos, d);
+            for (auto& rid : o.riderIds)
+                if (Furni* r = office.Find(rid)) r->pos = Vector3Add(r->pos, d);
             *f = o.snapshot;
         }
     // deferred spawned furniture is carried out by the crew instead of removed here
@@ -388,6 +438,10 @@ bool AnomalyDirector::Has(const std::string& channel) const {
 }
 bool AnomalyDirector::HasKind(const std::string& kind) const {
     for (auto* l : {&active, &pending}) for (auto& a : *l) if (a.kind == kind) return true;
+    return false;
+}
+bool AnomalyDirector::IdLive(const std::string& id) const {
+    for (auto* l : {&active, &pending}) for (auto& a : *l) if (a.id == id) return true;
     return false;
 }
 

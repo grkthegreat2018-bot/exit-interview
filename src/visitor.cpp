@@ -579,6 +579,28 @@ void VisitorSystem::Reset(bool freshNight) {
     // tonight's book = the full cast list cut to this night's difficulty cap
     schedule = schedFull.empty() ? schedTemplate : schedFull;
     if ((int)schedule.size() > slotCap) schedule.erase(schedule.begin() + slotCap, schedule.end());
+    // night 0 is the scripted orientation: a fixed two-appointment book -
+    // one plain interview, then one whose file disagrees with them. The
+    // second slot is dispatched by the tutorial once the lessons land.
+    if (night == 0 && data.contains("tutorial_schedule") && !data["tutorial_schedule"].empty())
+        schedule = data["tutorial_schedule"];
+    // ...and the anomalous share of it is capped too. Stock nights front-load
+    // 4 anomaly slots in a 6-visitor book - four naive releases was +56
+    // instability and a dead first shift. Keep the earliest tags (the
+    // learnable ones), demote the overflow to mundane interviews. "repeat"
+    // slots are exempt: a demoted repeat still books the same face twice,
+    // which reads as an unmarked anomaly - leave those alone entirely.
+    {
+        int an = 0;
+        for (auto& e : schedule) {
+            std::string a = JS(e, "anomaly", "");
+            if (a.empty() || a == "repeat") continue;
+            if (++an > anomalyCap) {
+                e["anomaly"] = nullptr;
+                TraceLog(LOG_INFO, "[book] night %d anomaly cap: slot demoted to mundane", night);
+            }
+        }
+    }
     for (auto& e : schedule) e.erase("visited");   // fresh night, nothing done yet
     if (const char* e = std::getenv("EI_VISIT"))   // dev: jump the schedule
         scheduleIdx = std::clamp(atoi(e), 0, (int)schedule.size());
@@ -781,9 +803,17 @@ void VisitorSystem::InjectLore() {
             cands.push_back(i);
     if (cands.empty()) return;
     int slot = cands[RandInt(0, (int)cands.size() - 1)];
-    const json& lp = data["lore_personas"][RandInt(0, (int)data["lore_personas"].size() - 1)];
-    std::string id = JS(lp, "id");
-    if (!RosterFind(id)) data["roster"].push_back(lp);
+    // prefer personas the player hasn't sat across from yet - the cast is a
+    // collection to complete across nights, not a dice roll that repeats
+    const json* lp = &data["lore_personas"][RandInt(0, (int)data["lore_personas"].size() - 1)];
+    if (loreSeen) {
+        std::vector<const json*> fresh;
+        for (auto& p : data["lore_personas"])
+            if (!loreSeen->count(JS(p, "id"))) fresh.push_back(&p);
+        if (!fresh.empty()) lp = fresh[RandInt(0, (int)fresh.size() - 1)];
+    }
+    std::string id = JS(*lp, "id");
+    if (!RosterFind(id)) data["roster"].push_back(*lp);
     schedFull[slot]["visitor_orig"] = JS(schedFull[slot], "visitor");  // displaced booking
     schedFull[slot]["visitor"] = id;
     if (slot < (int)schedule.size()) schedule[slot]["visitor"] = id;

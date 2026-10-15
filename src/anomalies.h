@@ -23,6 +23,7 @@ struct ResolveOutcome {
     Furni snapshot;
     bool hadTarget = false;
     std::string spawnedId;      // furniture the crew carries out
+    std::vector<std::string> riderIds;  // items on the host's top, captured once
     Vector3 workPos{0, 0, 0};   // where the crew stands
     bool deferred = false;      // world effect stays until ApplyResolveFx
 };
@@ -50,6 +51,7 @@ public:
     int ActiveCount() const { return (int)active.size(); }
     bool Has(const std::string& channel) const;
     bool HasKind(const std::string& kind) const;        // any active anomaly of this kind
+    bool IdLive(const std::string& id) const;           // id in active OR pending-crew
     std::string KindOf(const std::string& id) const;    // kind of an active anomaly ("" if none)
     std::vector<std::string> ActiveKeywords(const std::string& kindPrefix) const;
     void EnsureVisitor(const std::string& kind);        // seated visitor carries anomaly -> track it
@@ -65,6 +67,9 @@ public:
     int night = 1;                  // 1-indexed shift count - scales difficulty
     bool remixPending = false;              // scheduler wants an LLM-remix anomaly
     json pendingCall;                       // a call_events entry waiting for the Game
+    // lore collection the Game owns - the call pool prefers personas the
+    // player hasn't met yet so the cast reveals itself across runs
+    const std::set<std::string>* loreSeen = nullptr;
     void SetParts(const json& p) { parts = p; }
     // dev hot reload: swap the spawn catalog + tuning without touching live
     // anomalies (they keep their own snapshots/keywords)
@@ -115,6 +120,8 @@ private:
     std::vector<std::string> exhausted;
 
     json PickTier() const;
+    float NightScale(const char* key, float dflt) const;    // per-night array by (night-1)
+    int NightUnlock(const char* key, int dflt) const;       // scalar gate
     bool TargetWatched(const json& d, Office& office) const;
     void SpawnOffice(Office& office);
     void SpawnExterior(Office& office, VisitorSystem& vs);

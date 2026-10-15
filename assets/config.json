@@ -140,8 +140,44 @@
       "unlock_call_night": 2,
       "unlock_remix_night": 3,
       "unlock_intruder_night": 3,
-      "unlock_breach_night": 3
-    }
+      "unlock_breach_night": 3,
+      "max_concurrent": [
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "max_instab_per_spawn": [
+        1.4,
+        1.7,
+        2.0,
+        99.0,
+        99.0
+      ],
+      "max_anomalous_slots": [
+        2,
+        3,
+        4,
+        6,
+        7
+      ],
+      "release_instab_mul": [
+        0.45,
+        0.7,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "resolve_calm_sec": [
+        22,
+        18,
+        14,
+        10,
+        8
+      ]
+    },
+    "release_instab": 14.0
   },
   "llm": {
     "provider": "groq",

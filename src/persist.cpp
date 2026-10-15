@@ -58,7 +58,8 @@ void Game::LoadSettings() {
     volDrone = std::clamp(j.value("vol_drone", 1.f), 0.f, 2.f);
     hardcodedOnly = j.value("hardcoded_anomalies", true);   // LLM anomalies opt-IN, not default
     seenNames = j.value("seen_names", std::vector<std::string>{});
-    night = std::max(1, j.value("night", 1));
+    loreSeen = j.value("lore_seen", std::set<std::string>{});
+    night = std::max(0, j.value("night", 0));   // 0 = orientation not yet run
     lastEval = j.value("last_eval", std::string());
     if (j.contains("keys")) {
         auto& k = j["keys"];
@@ -71,7 +72,7 @@ void Game::LoadSettings() {
         keys.interact = k.value("interact", KEY_E);
         keys.swap = k.value("swap", KEY_TAB);
     }
-    if (const char* e = std::getenv("EI_NIGHT")) night = std::max(1, atoi(e));   // dev: force night
+    if (const char* e = std::getenv("EI_NIGHT")) night = std::max(0, atoi(e));   // dev: force night
     ApplyAudio();
 }
 
@@ -79,6 +80,7 @@ void Game::LoadSettings() {
 void Game::SaveSettings() {
     json j{{"provider", providerIdx}, {"api_key", apiKey}, {"sensitivity", sens},
            {"hardcoded_anomalies", hardcodedOnly}, {"seen_names", seenNames},
+           {"lore_seen", loreSeen},
            {"night", night}, {"last_eval", lastEval},
            {"vol_master", volMaster}, {"vol_sfx", volSfx}, {"vol_ambience", volAmb},
            {"vol_music", volMusic}, {"vol_drone", volDrone},
@@ -129,6 +131,7 @@ void Game::Save() {
     j["blinds"] = office.blindsOpen;
     j["director"] = ad.Serialize();
     j["visitors"] = vs.Serialize();
+    j["tutStep"] = tutStep;   // night-0 lesson plan position survives a reload
     SaveJsonFile(JS(Cfg(), "save_file", "save.json"), j);
     saveExists = true;
 }
@@ -152,5 +155,7 @@ bool Game::Load() {
     ad.night = night;                    // night lives in settings, not the shift save
     vs.night = night;
     vs.Deserialize(j["visitors"], office);
+    tutStep = j.value("tutStep", night == 0 ? 0 : -1);   // resume the lesson plan
+    if (night == 0) workCallT = 1e9f;    // and keep the mundane phone quiet
     return true;
 }

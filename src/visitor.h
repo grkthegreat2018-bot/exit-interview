@@ -150,6 +150,11 @@ public:
     // runs - early nights take a short list, later nights the full template
     void SetSlotCap(int n) { slotCap = n < 1 ? 1 : n; }
     int SlotCap() const { return slotCap; }
+    // how many anomaly-tagged slots the book may carry tonight - early nights
+    // get a thin spread so a new clerk isn't drowning in Security escorts
+    void SetAnomalyCap(int n) { anomalyCap = n < 0 ? 0 : n; }
+    // owned by Game - lore personas it already met lose the lottery first
+    const std::set<std::string>* loreSeen = nullptr;
 
 private:
     json data;
@@ -157,6 +162,7 @@ private:
     json schedTemplate;             // stock slot pattern (times + anomaly tags)
     json schedFull;                 // full working book BEFORE the night cap
     int slotCap = 999;
+    int anomalyCap = 999;
     Visitor cur;
     float ambientTimer = 20.f;
     bool knocked = false;

@@ -136,7 +136,9 @@ void Game::DrawTitle() {
     std::string sub = JS(Cfg()["game"], "subtitle");
     ts = MeasureTextEx(A.font, sub.c_str(), 24, 1);
     DrawTextEx(A.font, sub.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 80}, 24, 1, Color{140, 150, 160, 255});
-    std::string ntxt = night <= 1 ? "NIGHT ONE - ORIENTATION" : ("NIGHT " + std::to_string(night) + "  [R to wipe record]");
+    std::string ntxt = night == 0 ? "ORIENTATION SHIFT - TRAINING  [R to skip]"
+                     : night == 1 ? "NIGHT ONE"
+                     : ("NIGHT " + std::to_string(night) + "  [R to wipe record]");
     ts = MeasureTextEx(A.fontSmall, ntxt.c_str(), 20, 1);
     DrawTextEx(A.fontSmall, ntxt.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 112}, 20, 1, Color{170, 140, 80, 255});
     if (!lastEval.empty()) {
@@ -179,7 +181,9 @@ void Game::DrawTitle() {
     const float bw = 380.f, bh = 52.f, gap = 13.f;
     Rectangle r{W / 2.f - bw / 2, H * 0.50f, bw, bh};
     if (!updOpen) {
-        if (MenuBtn(r, "BEGIN THE NIGHT SHIFT", "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
+        if (MenuBtn(r, night == 0 ? "BEGIN THE ORIENTATION SHIFT" : "BEGIN THE NIGHT SHIFT",
+                   night == 0 ? "A guided first shift - two appointments, hands-on lessons."
+                              : "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
         r.y += bh + gap;
         if (saveExists) {
             if (MenuBtn(r, "CONTINUE FROM SAVE", "Resume the shift exactly where you left it.")) {
@@ -450,8 +454,8 @@ void Game::DrawSettings() {
             "How fast the view turns. 0.12 is the default feel; lower is steadier, higher is twitchier.");
         next();
         std::string nl = "SHIFT RECORD: NIGHT " + std::to_string(night) + "  (click to reset)";
-        if (MenuBtn(r, nl.c_str(), "Reset the night counter and your warning record back to night one.")) {
-            night = 1; seenNames.clear(); lastEval.clear(); SaveSettings();
+        if (MenuBtn(r, nl.c_str(), "Reset the night counter and your warning record - back to the training shift.")) {
+            night = 0; seenNames.clear(); lastEval.clear(); SaveSettings();
         }
         next();
         if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {

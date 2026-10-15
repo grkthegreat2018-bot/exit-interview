@@ -161,7 +161,8 @@ LLMClient::Result LLMClient::CallChatAPI(const Request& r) {
         std::string content = jr["choices"][0]["message"]["content"].get<std::string>();
         res.ok = true;
         res.text = SanitizeText(content);   // curly quotes/dashes -> ASCII glyphs
-        if (r.purpose == "report" || r.purpose == "facilities" || r.purpose == "phoneeval") {
+        if (r.purpose == "report" || r.purpose == "facilities" || r.purpose == "phoneeval" ||
+            r.purpose == "intervieweval") {
             ParseVerdict(res.text, res.matchedId, res.feedback, res.match);
             res.feedback = SanitizeText(res.feedback);
         }
@@ -222,6 +223,21 @@ LLMClient::Result LLMClient::StubRespond(const Request& r) {
              "understand", "appreciate", "help"});
         res.feedback = res.match ? "The line goes quiet, almost grateful."
                                  : "The voice on the other end goes cold.";
+        return res;
+    }
+
+    // interview-wrap judgement offline: any farewell/dismissal language from
+    // either side reads as a concluded interview - the miss is reserved for
+    // visitors who walked with the conversation still open
+    if (r.purpose == "intervieweval") {
+        res.match = TextHasAny(r.user,
+            {"goodbye", "good bye", "farewell", "take care", "thank you", "thanks",
+             "that is all", "that's all", "dismissed", "you may go", "you can go",
+             "we're done", "we are done", "end the interview", "see you",
+             "good luck", "pleasure", "wrap it up", "sign off", "excuse me",
+             "have a good", "be well", "show yourself out"});
+        res.feedback = res.match ? "Interview concluded."
+                                 : "They left mid-conversation.";
         return res;
     }
 

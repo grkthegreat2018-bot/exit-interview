@@ -518,5 +518,16 @@
   "the second clock is for the ones who ran out of the first. - M.",
   "ortiz never comes upstairs. if ortiz comes upstairs, be polite and fix nothing.",
   "my replacement interviewed well. yours is still training. - M."
- ]
+ ],
+ "tutorial": {
+  "welcome": "ORIENTATION SHIFT. Two appointments are on the book tonight. When someone knocks, let them in.",
+  "door": "They are at the door - open it and they will see themselves in.",
+  "sit": "Sit at your desk and ask them something. The RECORD app on the terminal has their file.",
+  "wrap": "That is an interview. When you are satisfied, END INTERVIEW - or just tell them they can go.",
+  "report": "While you were not watching, something moved on your desk. File a REPORT at the terminal - describe what changed.",
+  "facilities": "Confirmed - crew dispatched. Now the waiting room lights just died. Look through the door, then PHONE > FACILITIES.",
+  "security": "Handled. One more appointment is coming - check their file against what they tell you. If it does not match: PHONE > SECURITY > INTRUDER.",
+  "record": "Sit. Interview them like anyone else - but read their file in RECORD. If the story and the paperwork disagree, they are not your appointment.",
+  "done": "That is the whole job: clear the book, keep the room honest, last to 6 AM. An empty book clocks you out early."
+ }
 }

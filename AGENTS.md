@@ -133,6 +133,40 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   `remix` = LLM-designed anomaly validated against `assets/anomaly_parts.json`
   (spawnable types/anchors/limits/mutation whitelist) via `ad.ApplyRemixJson`.
   Both are gated by `ad.freeform` (the SCRIPTED ONLY toggle).
+- Night 0 is a scripted orientation, not a rolled shift: `night==0` parks
+  the spawn scheduler entirely (`ad.Update` early-outs) and clamps
+  instability at 85 so TERMINATED can't fire. `Game::UpdateTutorial`
+  (tutStep state machine, gated on what the player actually did) drives a
+  fixed two-appointment book from `visitors.json.tutorial_schedule` - a
+  plain interview, then a `record_mismatch` - and fires real anomaly defs
+  by hand (`mug_moved` for the REPORT lesson, `lights_out` for FACILITIES,
+  SECURITY escort for the mismatched file). tutStep persists in save.json;
+  R on the title skips training. Copy lives in `dialogs.json.tutorial`.
+- Pacing is budgeted, not pure dice: `instability.night_scaling` arrays
+  (indexed night-1) cap concurrent actives (`max_concurrent`), per-spawn
+  severity (`max_instab_per_spawn`), anomalous book slots
+  (`max_anomalous_slots` - demotes overflow; "repeat" slots exempt), and
+  soften unescorted releases early (`release_instab_mul`). A resolve also
+  buys `resolve_calm_sec` of guaranteed quiet. `validate_content.py`
+  audits every def for undetectable/unresolvable cases.
+- Interview endings are LLM-judged: a Seated->Leaving edge with player
+  lines submits the transcript as purpose `intervieweval`; the verdict
+  lands in `ivEvals` and is consumed in PollLLM - match credits
+  `interview_done`, miss charges `visitor_missed`. Natural farewells
+  ("that's all", "you can go") auto-end the interview AND satisfy the
+  eval; zero player lines charges instantly without a call. Anomalous or
+  escorted visitors never eval at all.
+- Lore is a persistent collection: `lore_seen` in settings.json tracks met
+  lore personas (marked when they sit), heard call personas (marked on
+  answer), and read notes (note_<idx> on read). Call rolls, lore-slot
+  injection and note picks all prefer unseen ids, so the cast reveals
+  itself across runs; stock call_events ring even under scripted-only.
+- Furniture riders: `Office::RestsOn` requires the rider footprint to fit
+  inside the host's top (a keyboard can never ride a mouse), and
+  `ResolveOutcome.riderIds` captures riders ONCE at BeginResolve - crew
+  and ApplyResolveFx move exactly those ids by the restore delta instead
+  of re-testing geometry against a moving host (that re-test was the
+  "mouse drags the keyboard home" bug).
 - New anomaly kinds: window_flip/window_void (office.windowView vista),
   hall_long (office.hallLong corridor), banging_door/banging_window
   (vs.banger* + BangerStrike -> Knock sfx), mutated_waiting

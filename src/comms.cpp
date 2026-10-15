@@ -434,6 +434,14 @@ void Game::AnswerPhone() {
     phone.ringing = false;
     phone.answered = true;
     deeds["call_answered"]++;
+    // the voice was heard - this caller's card is collected for good
+    if (!phone.isWork) {
+        std::string cid = JS(phone.ev, "id");
+        if (!cid.empty() && loreSeen.insert(cid).second) {
+            deeds["lore_found"]++;
+            SaveSettings();
+        }
+    }
     phone.transcript.push_back({JS(phone.ev, "persona"), JS(phone.ev, "greeting")});
     phoneDlg.title = phone.isWork ? "INCOMING CALL" : "PHONE CALL";
     phoneDlg.endLabel = "HANG UP";
@@ -677,6 +685,25 @@ void Game::PollLLM() {
     if (phoneEvalReq != -1 && llm.Poll(phoneEvalReq, res)) {
         phoneEvalReq = -1;
         PhoneOutcome(res.match);
+    }
+    // delayed interview-wrap verdicts: a concluded interview counts, a guest
+    // who walked mid-conversation is the write-up. The eval fires on the
+    // leave edge, the reply lands a beat later - name rides along for the toast
+    for (auto it = ivEvals.begin(); it != ivEvals.end();) {
+        if (!llm.Poll(it->first, res)) { ++it; continue; }
+        TraceLog(LOG_INFO, "[llm] intervieweval verdict backend=%s match=%d visitor=%s",
+                 res.backend.c_str(), (int)res.match, it->second.c_str());
+        if (res.match) {
+            deeds["interview_done"]++;
+            if (!res.feedback.empty()) os.SetStatus(res.feedback);
+        } else {
+            deeds["visitor_missed"]++;
+            Notify("WARNING ISSUED - " + it->second +
+                   " left without a proper interview. It goes on your record.");
+            notes.back().second = 10.f;
+            audio.Play(AudioBank::Sfx::Buzz, 0.55f);
+        }
+        it = ivEvals.erase(it);
     }
     // rate limit handling: save + pause once per cooldown (never on the menu)
     if (llm.RateLimited() && !rlHandled && mode != Mode::Title) {

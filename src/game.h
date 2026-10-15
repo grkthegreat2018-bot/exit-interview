@@ -68,6 +68,10 @@ private:
     int rosterReq = -1;                     // persona roster generation job
     std::string rosterRaw;                  // validated at shift start
     std::vector<std::string> seenNames;     // personas already used (persisted)
+    std::set<std::string> loreSeen;         // lore ids met across runs (persisted)
+    // in-flight "did that interview actually conclude" verdicts - a visitor
+    // leaving triggers the eval, the reply lands here a few seconds later
+    std::vector<std::pair<int, std::string>> ivEvals;   // (req id, visitor name)
     void RequestRoster();                   // ask the LLM for tonight's cast
     int callEvReq = -1;                     // LLM job authoring tonight's call personas
     bool callGenDone = false;               // fires once per title visit - injected into the pool
@@ -109,6 +113,8 @@ private:
     int night = 1;                  // persistent shift count - scales difficulty
     std::set<std::string> tutSeen;  // tutorial toasts already shown this shift
     void Tut(const char* key, const std::string& msg);  // fire-once night-1 hint
+    int tutStep = -1;               // night-0 scripted lesson plan (-1 = off)
+    void UpdateTutorial(float dt);  // advances the orientation sequence
     int paperReq = -1;              // LLM paperwork generation job
     std::string paperRaw;           // generated forms, validated at shift start
     json paperForms = json::array();            // tonight's forms (LLM or stock)

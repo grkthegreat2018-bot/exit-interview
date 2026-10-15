@@ -207,12 +207,18 @@ void Office::ApplyMutationAnimated(const std::string& targetId, const json& m, f
 }
 
 bool Office::RestsOn(const Furni& it, const Furni& host) const {
-    // standing on the host's top surface: base height matches the top,
-    // footprint lands inside the host's horizontal extent
+    // standing on the host's top surface: base height matches the top AND the
+    // item's whole footprint fits inside the host's top. The footprint test is
+    // what keeps desk neighbors honest - without it a sliding mouse (0.09 wide)
+    // "carries" the 0.5m keyboard it passes under, dragging it across the desk
+    // during crew shoves / resolve restores.
     if (&it == &host) return false;
     if (std::fabs(it.pos.y - (host.pos.y + host.size.y)) > 0.12f) return false;
-    if (std::fabs(it.pos.x - host.pos.x) > host.size.x / 2 + 0.06f) return false;
-    if (std::fabs(it.pos.z - host.pos.z) > host.size.z / 2 + 0.06f) return false;
+    if (it.size.x > host.size.x + 0.02f || it.size.z > host.size.z + 0.02f) return false;
+    float mx = std::max(0.f, (host.size.x - it.size.x) * 0.5f) + 0.06f;
+    float mz = std::max(0.f, (host.size.z - it.size.z) * 0.5f) + 0.06f;
+    if (std::fabs(it.pos.x - host.pos.x) > mx) return false;
+    if (std::fabs(it.pos.z - host.pos.z) > mz) return false;
     return true;
 }
 
