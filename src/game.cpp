@@ -138,7 +138,7 @@ bool Game::Init() {
                 "- clipboard paper is now regulation weight\n");
             updOpen = 1;
         } else if (!uh || std::strcmp(uh, "off")) {
-            updater->Start(repoUrl, gameVersion);
+            updater->Start(repoUrl, gameVersion, EI_BUILD_SHA);
         }
     }
     // dev screenshots (EI_SHOT / F12 / EI_DUMPRT) collect in shots/ instead
@@ -2206,7 +2206,8 @@ void Game::Run() {
                 // on a slow timer so a late connection still finds updates
                 if (updater) {
                     updRetryT += dt;
-                    if (updRetryT >= 20.f && updRetries < 15) {
+                    if (updRetryT >= (updRetries == 0 ? 6.f : 15.f) &&
+                        updRetries < 15) {
                         if (updater->GetState() == GameUpdater::State::Idle) {
                             updater->Retry();
                             updRetries++;

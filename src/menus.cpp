@@ -362,8 +362,12 @@ void Game::DrawUpdatePopup() {
         return MenuBtn({bx, by, bw, 44.f}, label, tt);
     };
     if (us == GameUpdater::State::Available) {
-        if (Btn(card.x + 28.f, 300.f, "DOWNLOAD UPDATE", "Fetch the new build from github now."))
-            updater->BeginDownload();
+        bool noPkg = updater->Assetless();   // commit-ahead notice, no package
+        if (Btn(card.x + 28.f, 300.f, noPkg ? "VIEW ON GITHUB" : "DOWNLOAD UPDATE",
+                noPkg ? "New commits on main - open the repo page."
+                      : "Fetch the new build from github now.")) {
+            if (noPkg) updater->OpenRepoPage(); else updater->BeginDownload();
+        }
         if (Btn(card.x + card.width - 148.f, 120.f, "LATER", "Back to the menu - the badge stays in the corner."))
             updOpen = 0;
     } else if (us == GameUpdater::State::Downloading) {

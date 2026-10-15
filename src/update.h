@@ -1,4 +1,7 @@
 #pragma once
+#ifndef EI_BUILD_SHA
+#define EI_BUILD_SHA ""    // baked by CMake; empty for non-git builds
+#endif
 #include "common.h"
 #include <httplib.h>
 #include <thread>
@@ -159,10 +162,12 @@ public:
     enum class State { Idle, Checking, Available, Downloading, Ready,
                        Applying, Applied, Error };
 
-    void Start(const std::string& repoUrl, const std::string& curVer) {
+    void Start(const std::string& repoUrl, const std::string& curVer,
+               const std::string& buildSha = "") {
         if (started || repoUrl.empty()) return;
         started = true;
         cur = curVer;
+        sha = buildSha;
         // repoUrl may be "github.com/owner/repo" or a full https URL
         std::string r = repoUrl;
         for (auto& ch : r) ch = (char)tolower((unsigned char)ch);
@@ -189,6 +194,18 @@ public:
     std::string Changelog() const { std::lock_guard<std::mutex> l(m); return changelog; }
     std::string Error() const { std::lock_guard<std::mutex> l(m); return errMsg; }
     std::string CurrentVersion() const { return cur; }
+    // a commit-ahead notice has no package to download - the popup offers
+    // the repo page instead of a download button
+    bool Assetless() const { std::lock_guard<std::mutex> l(m); return assetUrl.empty(); }
+
+    void OpenRepoPage() const {
+        std::string url = "https://github.com/" + repo;
+#ifdef _WIN32
+        std::system(("start \"\" \"" + url + "\"").c_str());
+#else
+        std::system(("xdg-open \"" + url + "\" >/dev/null 2>&1 &").c_str());
+#endif
+    }
 
     void BeginDownload() {
         if (GetState() != State::Available) return;
@@ -291,8 +308,8 @@ private:
             for (auto* o : okHosts) if (h == o) allowed = true;
             if (!allowed) return false;
             httplib::SSLClient cli(h);
-            cli.set_connection_timeout(15, 0);
-            cli.set_read_timeout(30, 0);
+            cli.set_connection_timeout(10, 0);
+            cli.set_read_timeout(25, 0);
             cli.enable_server_certificate_verification(false);
             cli.set_follow_location(false);
             httplib::Headers hd{{"User-Agent", "exit-interview-updater"},
@@ -341,38 +358,93 @@ private:
     void CheckThread() {
         st = State::Checking;
         std::string body;
-        if (!HttpGet("api.github.com", "/repos/" + repo + "/releases/latest",
-                     &body, "", nullptr, &stop) || stop) {
-            st = State::Idle;    // silent: no release yet / offline / not a repo
+        bool got = HttpGet("api.github.com",
+                           "/repos/" + repo + "/releases/latest",
+                           &body, "", nullptr, &stop);
+        if (stop) { st = State::Idle; return; }
+        if (got) {
+            json j;
+            try { j = json::parse(body); } catch (...) { j = json::object(); }
+            std::string tag = j.value("tag_name", "");
+            if (!tag.empty() && Newer(tag, cur)) {
+                std::string asset;
+#ifdef _WIN32
+                const char* want = "win64.zip";
+#else
+                const char* want = "linux64.tar.gz";
+#endif
+                if (j.contains("assets"))
+                    for (auto& a : j["assets"]) {
+                        std::string nm = a.value("name", "");
+                        if (nm.size() >= strlen(want) &&
+                            nm.compare(nm.size() - strlen(want), strlen(want), want) == 0)
+                            asset = a.value("browser_download_url", "");
+                    }
+                {
+                    std::lock_guard<std::mutex> l(m);
+                    newVer = tag;
+                    changelog = j.value("body", "");
+                    assetUrl = asset;
+                }
+                st = State::Available;
+                TraceLog(LOG_INFO, "[update] new release %s available (current %s)",
+                         tag.c_str(), cur.c_str());
+                return;
+            }
+        } else {
             TraceLog(LOG_INFO, "[update] release check failed (offline? no releases?) - will retry on title");
+        }
+        // no usable release - most installs are source builds, so a newer
+        // main branch counts as "a new version" too
+        CheckCommits();
+    }
+
+    // GET compare/{build}...{branch}: "ahead" = remote main has commits this
+    // binary predates. Popup shows the delta + a repo link (no auto-install -
+    // source builds ship no package until a release is tagged)
+    void CheckCommits() {
+        if (sha.empty()) { st = State::Idle; return; }
+        static const char* branches[] = {"main", "master"};
+        for (auto* br : branches) {
+            if (stop) { st = State::Idle; return; }
+            std::string body;
+            if (!HttpGet("api.github.com",
+                         "/repos/" + repo + "/compare/" + sha + "..." + br,
+                         &body, "", nullptr, &stop))
+                continue;
+            json j;
+            try { j = json::parse(body); } catch (...) { continue; }
+            std::string status = j.value("status", "");
+            if (status != "ahead") { st = State::Idle; return; }  // found our commit
+            int n = j.value("ahead_by", 0);
+            std::string notes;
+            if (j.contains("commits")) {
+                int cnt = 0;
+                for (auto& c : j["commits"]) {
+                    std::string msg = c["commit"].value("message", "");
+                    size_t nl = msg.find('\n');
+                    if (nl != std::string::npos) msg.resize(nl);
+                    while (!msg.empty() && (msg.back() == ' ' || msg.back() == '\r'))
+                        msg.pop_back();
+                    if (msg.empty()) continue;
+                    notes += "- " + msg + "\n";
+                    if (++cnt >= 12) { notes += "- ..."; break; }
+                }
+            }
+            notes += "\nsource build " + std::to_string(n) +
+                     " commit" + (n == 1 ? "" : "s") +
+                     " behind - pull main or grab the latest build";
+            {
+                std::lock_guard<std::mutex> l(m);
+                newVer = "main+" + std::to_string(n);
+                changelog = notes;
+                assetUrl.clear();
+            }
+            st = State::Available;
+            TraceLog(LOG_INFO, "[update] main is %d commit(s) ahead of this build", n);
             return;
         }
-        json j;
-        try { j = json::parse(body); } catch (...) { st = State::Idle; return; }
-        std::string tag = j.value("tag_name", "");
-        if (tag.empty() || !Newer(tag, cur)) { st = State::Idle; return; }
-        std::string asset;
-#ifdef _WIN32
-        const char* want = "win64.zip";
-#else
-        const char* want = "linux64.tar.gz";
-#endif
-        if (j.contains("assets"))
-            for (auto& a : j["assets"]) {
-                std::string nm = a.value("name", "");
-                if (nm.size() >= strlen(want) &&
-                    nm.compare(nm.size() - strlen(want), strlen(want), want) == 0)
-                    asset = a.value("browser_download_url", "");
-            }
-        {
-            std::lock_guard<std::mutex> l(m);
-            newVer = tag;
-            changelog = j.value("body", "");
-            assetUrl = asset;
-        }
-        st = State::Available;
-        TraceLog(LOG_INFO, "[update] new release %s available (current %s)",
-                 tag.c_str(), cur.c_str());
+        st = State::Idle;
     }
 
     void DownloadThread() {
@@ -404,7 +476,7 @@ private:
     }
 
 
-    std::string repo, cur;
+    std::string repo, cur, sha;
     std::atomic<State> st{State::Idle};
     std::atomic<float> progress{0.f};
     std::atomic<bool> stop{false};
