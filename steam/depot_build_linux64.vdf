@@ -1,0 +1,27 @@
+// Linux depot: dist/exit-interview-linux64 contents -> depot root.
+// IMPORTANT: upload this depot from a Linux/macOS steamcmd (or CI runner).
+// steamcmd on Windows does NOT preserve the +x bit, and players get a
+// "permission denied" on launch. See steam/README.md.
+"DepotBuild"
+{
+    "DepotID"     "DEPOT_LINUX"
+    "ContentRoot" "..\content\linux64\"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "Recursive" "1"
+    }
+
+    "FileProperties"
+    {
+        "LocalPath"  "settings.json"
+        "Attributes" "userconfig"
+    }
+    "FileProperties"
+    {
+        "LocalPath"  "save.json"
+        "Attributes" "userconfig"
+    }
+}

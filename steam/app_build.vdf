@@ -1,0 +1,17 @@
+// EXIT INTERVIEW - SteamPipe app build script.
+// Replace APPID / DEPOT_WIN / DEPOT_LINUX with the real IDs from
+// Steamworks > SteamPipe > Depots once the app exists.
+// Run:  steamcmd +login <user> +run_app_build scripts/app_build.vdf +quit
+"AppBuild"
+{
+    "AppID"       "APPID"
+    "Desc"        "EXIT INTERVIEW - release build"
+    "ContentRoot" "..\content\"
+    "BuildOutput" "..\output\"
+
+    "Depots"
+    {
+        "DEPOT_WIN"   "depot_build_win64.vdf"
+        "DEPOT_LINUX" "depot_build_linux64.vdf"
+    }
+}

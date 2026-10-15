@@ -1,0 +1,26 @@
+// Windows depot: dist/exit-interview-win64 contents -> depot root.
+"DepotBuild"
+{
+    "DepotID"     "DEPOT_WIN"
+    "ContentRoot" "..\content\win64\"
+
+    "FileMapping"
+    {
+        "LocalPath" "*"
+        "DepotPath" "."
+        "Recursive" "1"
+    }
+
+    // settings.json / save.json are written NEXT TO the exe at runtime;
+    // mark the seed copies so updates never clobber a player's data
+    "FileProperties"
+    {
+        "LocalPath"  "settings.json"
+        "Attributes" "userconfig"
+    }
+    "FileProperties"
+    {
+        "LocalPath"  "save.json"
+        "Attributes" "userconfig"
+    }
+}

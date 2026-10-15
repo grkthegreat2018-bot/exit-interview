@@ -22,6 +22,12 @@ nlohmann-json, cpp-httplib[openssl]. All tuned in `assets/config.json`.
   artifacts. No local Linux needed; the source has no Windows-only APIs.
 - `linux` CMake preset exists for a WSL/manual build (`$env{VCPKG_ROOT}`
   toolchain, ninja, `build-linux/`).
+- `steam/` — SteamPipe release kit: `app_build.vdf` + per-OS depot scripts
+  (fill in APPID/DEPOT_* once the app exists), `stage_content.ps1` to
+  assemble `steam/content/{win64,linux64}`, and README.md with the full
+  Steamworks checklist (launch options, depot setup, store assets).
+  GOTCHA: upload the Linux depot from Linux steamcmd/CI — Windows steamcmd
+  drops the executable bit.
 - Credits/repo line on the title are data-driven: `game.credits` and
   `game.repo_url` in `assets/config.json` — fix the URL after the repo
   is created.
