@@ -32,3 +32,5 @@ _update_failed.txt
 
 # vcpkg local install if it lands in-tree
 vcpkg_installed/
+
+.devin/msg.txt
