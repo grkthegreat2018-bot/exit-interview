@@ -139,6 +139,7 @@ void Game::DrawTitle() {
     std::string ntxt = night == 0 ? "ORIENTATION SHIFT - TRAINING  [R to skip]"
                      : night == 1 ? "NIGHT ONE"
                      : ("NIGHT " + std::to_string(night) + "  [R to wipe record]");
+    if (weekDone) ntxt += "   - WEEK SURVIVED";
     ts = MeasureTextEx(A.fontSmall, ntxt.c_str(), 20, 1);
     DrawTextEx(A.fontSmall, ntxt.c_str(), {W / 2.f - ts.x / 2, H * 0.22f + 112}, 20, 1, Color{170, 140, 80, 255});
     if (!lastEval.empty()) {

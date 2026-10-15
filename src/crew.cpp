@@ -260,6 +260,12 @@ void Game::DispatchCrew(std::vector<ResolveOutcome> outs, int men, bool guards, 
         e.men.push_back(m);
     }
     crew.push_back(e);
+    {
+        std::string what;
+        for (auto& o : outs) what += (what.empty() ? "" : "+") + o.id;
+        TraceLog(LOG_INFO, "[crew] dispatched %s x%d for %s",
+                 guards ? "guards" : "workers", men, what.c_str());
+    }
     Notify(guards ? "Security detail en route."
          : e.prop == PROP_LADDER ? "Maintenance is bringing a ladder."
          : "Maintenance crew en route.");
@@ -353,6 +359,7 @@ void Game::UpdateCrew(float dt) {
         if (e.phase == 0 && allDone) {
             e.phase = 1; e.workT = 0; e.propOut = true;
             audio.Play(AudioBank::Sfx::Thump, 0.3f);
+            TraceLog(LOG_INFO, "[crew] on site - %s", e.outcomes[0].id.c_str());
             if (e.outcomes[0].channel == "intruder") ad.ClearIntruder(office);
             if (e.escortVisitor) vs.SecurityRemove();
             // figures read as "already gone when they got there" - clear on
@@ -429,7 +436,10 @@ void Game::UpdateCrew(float dt) {
                 audio.Play(AudioBank::Sfx::Click, 0.55f);
             }
         }
-        if (e.phase == 2 && allDone) e.phase = 3;
+        if (e.phase == 2 && allDone) {
+            e.phase = 3;
+            TraceLog(LOG_INFO, "[crew] cleared out - %s", e.outcomes[0].id.c_str());
+        }
     }
     std::erase_if(crew, [&](const CrewEvt& e) {
         if (e.phase != 3) return false;

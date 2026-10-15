@@ -61,6 +61,8 @@ private:
     float doorRattle = 0;           // transient door-panel shudder from banger hits
     bool manualLightsOff = false;   // player flicked the light switch off
     bool godMode = false;           // EI_GOD / seq 'god' - deaths log instead of firing
+    bool weekDone = false;          // persisted: survived the final scaled night once
+    bool weekJustDone = false;      // transient: that completion was THIS shift
     void CollectLights();           // build fx.lights from furniture + config
 
     // llm request ids

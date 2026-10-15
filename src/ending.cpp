@@ -90,6 +90,10 @@ void Game::WinShift(bool early) {
     evalScore = EvalScore();
     lastEval = std::string(EvalGrade(evalScore)) + " (" + std::to_string(evalScore) + ")";
     night++;                          // surviving earns the harder shift
+    if (night >= 6 && !weekDone) {    // the scaled campaign runs 5 nights;
+        weekDone = true;              // surviving night 5 is the milestone -
+        weekJustDone = true;          // endless overtime keeps going after
+    }
     SaveSettings();
     audio.Play(AudioBank::Sfx::Whoosh, 0.55f);   // dawn breaks
 }
@@ -102,6 +106,14 @@ void Game::DrawEnding() {
     std::string t = (mode == Mode::Win) ? "SHIFT COMPLETE" : deathTitle;
     Color tc = (mode == Mode::Win) ? Color{180, 220, 190, 255} : Color{220, 90, 80, 255};
     DrawTextEx(A.fontBig, t.c_str(), {W / 2.f - MeasureTextEx(A.fontBig, t.c_str(), 65, 2).x / 2, H * 0.22f}, 65, 2, tc);
+    if (mode == Mode::Win && weekJustDone) {
+        const char* wb = "FULL WEEK SURVIVED";
+        DrawTextEx(A.font, wb, {W / 2.f - MeasureTextEx(A.font, wb, 26, 1).x / 2, H * 0.295f}, 26, 1,
+                   Color{230, 195, 90, 255});
+        const char* wb2 = "the building lets you go. for now.";
+        DrawTextEx(A.fontSmall, wb2, {W / 2.f - MeasureTextEx(A.fontSmall, wb2, 16, 1).x / 2, H * 0.325f}, 16, 1,
+                   Color{170, 160, 120, 235});
+    }
     float y = H * 0.36f;
     for (auto& l : WrapText(A.font, ending, 24, 1, W * 0.6f)) {
         DrawTextEx(A.font, l.c_str(), {W / 2.f - MeasureTextEx(A.font, l.c_str(), 24, 1).x / 2, y}, 24, 1, Color{200, 200, 195, 255});

@@ -61,6 +61,7 @@ void Game::LoadSettings() {
     loreSeen = j.value("lore_seen", std::set<std::string>{});
     night = std::max(0, j.value("night", 0));   // 0 = orientation not yet run
     lastEval = j.value("last_eval", std::string());
+    weekDone = j.value("week_done", false);
     if (j.contains("keys")) {
         auto& k = j["keys"];
         keys.fwd = k.value("fwd", KEY_W);
@@ -81,7 +82,7 @@ void Game::SaveSettings() {
     json j{{"provider", providerIdx}, {"api_key", apiKey}, {"sensitivity", sens},
            {"hardcoded_anomalies", hardcodedOnly}, {"seen_names", seenNames},
            {"lore_seen", loreSeen},
-           {"night", night}, {"last_eval", lastEval},
+           {"night", night}, {"last_eval", lastEval}, {"week_done", weekDone},
            {"vol_master", volMaster}, {"vol_sfx", volSfx}, {"vol_ambience", volAmb},
            {"vol_music", volMusic}, {"vol_drone", volDrone},
            {"llm_endpoint", llmEndpoint}, {"llm_model", llmModel},

@@ -1501,6 +1501,8 @@ void Game::UpdateCommon(float dt) {
             if (player.hiding) {
                 breachSearchT = JF(Cfg()["instability"], "breach_search_sec", 6.f);
                 audio.Play(AudioBank::Sfx::Heart, 0.9f);
+                TraceLog(LOG_INFO, "[breach] entered via %s - searching, player hidden",
+                         breachDoor ? "door" : "window");
             } else {
                 deathTitle = breachDoor ? "IT CAME THROUGH THE DOOR"
                                         : "IT CAME THROUGH THE GLASS";
@@ -1516,8 +1518,11 @@ void Game::UpdateCommon(float dt) {
         } else if (breachSearchT <= 0) {
             breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
             deeds["breach_survived"]++;
-            Notify("It searched the room and left. The window is broken - call Facilities.");
+            Notify(breachDoor ? "It searched the room and left. Check the door."
+                              : "It searched the room and left. The window is broken - call Facilities.");
             audio.Play(AudioBank::Sfx::Creak, 0.6f);
+            TraceLog(LOG_INFO, "[breach] search ended - survived via %s",
+                     breachDoor ? "door" : "window");
         }
     } else if ((windowThreat || doorThreat) && breachCooldown <= 0) {
         breachT += dt;
@@ -2019,7 +2024,7 @@ void Game::Run() {
                 break;
             case Mode::Dead:
             case Mode::Win:
-                if (IsKeyPressed(KEY_ENTER)) { mode = Mode::Title; }
+                if (IsKeyPressed(KEY_ENTER)) { mode = Mode::Title; weekJustDone = false; }
                 break;
         }
 
