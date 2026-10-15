@@ -1295,6 +1295,15 @@ void Game::UpdateCommon(float dt) {
                        " left without a proper interview. It goes on your record.");
                 notes.back().second = 10.f;
                 audio.Play(AudioBank::Sfx::Buzz, 0.55f);
+            } else if (vs.Cur().autoWrap) {
+                // the appointment simply ran out while you were talking -
+                // that IS a concluded interview, not a walkout; sending it
+                // to the eval would get "left mid-conversation" back and
+                // wrongly charge a miss
+                deeds["interview_done"]++;
+                TraceLog(LOG_INFO, "[interview] %s appointment elapsed with %d player lines -> interview_done",
+                         vs.Cur().Name().c_str(), playerLines);
+                os.SetStatus("Interview logged - " + vs.Cur().Name());
             } else {
                 std::string convo;
                 for (auto& [s, tx] : vs.transcript)

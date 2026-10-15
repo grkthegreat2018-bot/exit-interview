@@ -75,6 +75,8 @@ struct Visitor {
     float cowerYaw = 0.f, cowerT = -1.f;
     bool cowerRising = false;
     bool promoted = false;          // was a waiting-room ambient, not a fresh spawn
+    bool autoWrap = false;          // left because the appointment ran out,
+                                    // not because the player blew it off
 
     bool Active() const { return state != VState::None && state != VState::Gone; }
     std::string Name() const { return person ? JS(*person, "name") : std::string("?"); }

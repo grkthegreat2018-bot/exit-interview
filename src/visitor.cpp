@@ -329,7 +329,10 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
         case 2:   // long: cap plus a fall of hair down the back
             capWithNape({hb.x - f.x * 0.026f, hb.y + 0.036f * a.height, hb.z - f.z * 0.026f},
                         0.118f * a.height);
-            rlNormal3f(-f.x, -0.3f, -f.z);
+            // strands catch the ceiling lights, not the floor: DrawCylinderEx
+            // emits one flat normal per piece - aiming it back-DOWN left the
+            // fall lit by nothing and black whatever colour the hair was
+            rlNormal3f(-f.x * 0.55f, 0.62f, -f.z * 0.55f);
             DrawCylinderEx({hb.x - f.x * 0.08f * a.height, hb.y + 0.01f, hb.z - f.z * 0.08f * a.height},
                            {hb.x - f.x * 0.10f * a.height, hb.y - 0.20f * a.height, hb.z - f.z * 0.10f * a.height},
                            0.055f * a.height, 0.045f * a.height, 6, a.hair);
@@ -339,7 +342,7 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                         0.118f * a.height);
             Sph({hb.x - f.x * 0.11f * a.height, hb.y + 0.075f * a.height, hb.z - f.z * 0.11f * a.height},
                 0.045f * a.height, a.hair);
-            rlNormal3f(-f.x, -0.4f, -f.z);
+            rlNormal3f(-f.x * 0.55f, 0.62f, -f.z * 0.55f);
             DrawCylinderEx({hb.x - f.x * 0.10f * a.height, hb.y + 0.06f, hb.z - f.z * 0.10f * a.height},
                            {hb.x - f.x * 0.11f * a.height, hb.y - 0.10f * a.height, hb.z - f.z * 0.11f * a.height},
                            0.038f * a.height, 0.030f * a.height, 6, a.hair);
@@ -1201,6 +1204,7 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
                 cur.state = VState::Leaving;
                 cur.wp = 0;
                 cur.seated = false;
+                cur.autoWrap = true;   // schedule timeout - not a walkout
                 notify(cur.Name() + " wraps up the interview and heads out.");
                 break;
             }
