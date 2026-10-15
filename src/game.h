@@ -279,6 +279,7 @@ private:
     float updRetryT = 0.f;    // title-screen recheck timer
     int updRetries = 0;       // bounded re-checks while offline/wifi late
     float fpStepT = 0.f;      // fp-body stride phase - locked to bobT while moving
+    std::string shotReq;      // pending seq screenshot path (shots/<n>.png)
     float updScroll = 0.f;    // changelog scroll offset
     void DrawUpdatePopup();
 

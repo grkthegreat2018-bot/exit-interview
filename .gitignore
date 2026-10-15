@@ -34,3 +34,6 @@ _update_failed.txt
 vcpkg_installed/
 
 .devin/msg.txt
+
+exit-interview-win64.zip
+exit_interview.zip

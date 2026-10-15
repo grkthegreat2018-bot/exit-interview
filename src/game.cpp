@@ -703,6 +703,8 @@ void Game::ExecSeq(const std::string& c) {
         if (vs.HasActiveVisitor()) vs.CurMut().state = VState::Gone;
     } else if (op == "freeze") {     // freeze:<sec> holds instability (paperwork fx)
         ad.FreezeInstability(arg.empty() ? 30.f : (float)atof(arg.c_str()));
+    } else if (op == "shot") {    // shot:<name> -> shots/<name>.png this frame
+        shotReq = "shots/" + arg + ".png";
     } else if (op == "notify") {
         Notify(arg);
     } else if (op == "save") {       // write the shift save where it stands
@@ -2576,6 +2578,12 @@ void Game::Run() {
         UnloadImage(img);
     }
         EndDrawing();
+        if (!shotReq.empty()) {                      // seq-driven capture
+            Image img = LoadImageFromScreen();
+            ExportImage(img, shotReq.c_str());
+            UnloadImage(img);
+            shotReq.clear();
+        }
         // dev hook: capture the just-presented frame, then quit (EI_SHOT=seconds)
         if (shotAt > 0.f && (float)GetTime() >= shotAt) {
         Image img = LoadImageFromScreen();          // TakeScreenshot strips dirs
