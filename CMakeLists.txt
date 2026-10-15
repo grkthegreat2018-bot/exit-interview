@@ -12,6 +12,11 @@ find_package(OpenSSL REQUIRED)
 file(GLOB SRC CONFIGURE_DEPENDS "src/*.cpp")
 add_executable(exit_interview ${SRC})
 
+# file icon for Explorer/Steam - .rc is a no-op for the Linux CI build
+if(WIN32)
+    target_sources(exit_interview PRIVATE "${CMAKE_SOURCE_DIR}/exit_interview.rc")
+endif()
+
 target_link_libraries(exit_interview PRIVATE
     raylib
     nlohmann_json::nlohmann_json

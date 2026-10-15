@@ -21,6 +21,10 @@ shots/
 trailer_work/
 trailer.mp4
 
+# packaged binaries - GitHub Actions artifacts/releases own these
+dist/
+exit_interview.zip
+
 # updater staging dirs (created next to the exe at runtime)
 _update/
 _upd_done.txt
