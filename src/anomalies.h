@@ -64,6 +64,13 @@ public:
     void DebugCallEvent(const json& ev);                            // dev hook: ring the desk phone now
     void DebugIntruder(Office& office) { SpawnIntruder(office); }   // dev hook: force the intruder roll
     bool devCalm = false;   // dev: parks the spawn scheduler (like night 0) but keeps flag sync
+    void DebugVanom(VisitorSystem& vs) {          // dev: corrupt the seated visitor now
+        if (!vs.VisitorSeated() || !vs.Cur().anomaly.empty()) {
+            TraceLog(LOG_WARNING, "[dev] vanom: no seated uncorrupted visitor");
+            return;
+        }
+        SpawnVisitorCorruption(vs);
+    }
 
     // freeform (LLM) anomaly plumbing - off when the player picks scripted-only
     bool freeform = true;

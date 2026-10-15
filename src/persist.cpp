@@ -73,7 +73,10 @@ void Game::LoadSettings() {
         keys.interact = k.value("interact", KEY_E);
         keys.swap = k.value("swap", KEY_TAB);
     }
-    if (const char* e = std::getenv("EI_NIGHT")) night = std::max(0, atoi(e));   // dev: force night
+    if (const char* e = std::getenv("EI_NIGHT")) {   // dev: force night -
+        nightBeforeEnv = night;                    // remember the real record;
+        night = std::max(0, atoi(e));              // SaveSettings writes the
+    }                                              // pre-forced value back out
     ApplyAudio();
 }
 
@@ -82,7 +85,8 @@ void Game::SaveSettings() {
     json j{{"provider", providerIdx}, {"api_key", apiKey}, {"sensitivity", sens},
            {"hardcoded_anomalies", hardcodedOnly}, {"seen_names", seenNames},
            {"lore_seen", loreSeen},
-           {"night", night}, {"last_eval", lastEval}, {"week_done", weekDone},
+           {"night", nightBeforeEnv >= 0 ? nightBeforeEnv : night},
+           {"last_eval", lastEval}, {"week_done", weekDone},
            {"vol_master", volMaster}, {"vol_sfx", volSfx}, {"vol_ambience", volAmb},
            {"vol_music", volMusic}, {"vol_drone", volDrone},
            {"llm_endpoint", llmEndpoint}, {"llm_model", llmModel},

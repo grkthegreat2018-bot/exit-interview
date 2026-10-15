@@ -652,6 +652,8 @@ void Game::ExecSeq(const std::string& c) {
             ad.DebugCallEvent(A.anomalies["call_events"][0]);
     } else if (op == "intruder") {
         ad.DebugIntruder(office);
+    } else if (op == "vanom") {      // corrupt whoever sits in the chair
+        ad.DebugVanom(vs);
     } else if (op == "god") {        // deaths get logged, not fired
         godMode = true;
     } else if (op == "calm") {       // park the spawn scheduler

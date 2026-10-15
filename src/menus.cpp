@@ -456,7 +456,7 @@ void Game::DrawSettings() {
         next();
         std::string nl = "SHIFT RECORD: NIGHT " + std::to_string(night) + "  (click to reset)";
         if (MenuBtn(r, nl.c_str(), "Reset the night counter and your warning record - back to the training shift.")) {
-            night = 0; seenNames.clear(); lastEval.clear(); SaveSettings();
+            night = 0; nightBeforeEnv = -1; seenNames.clear(); lastEval.clear(); SaveSettings();
         }
         next();
         if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {

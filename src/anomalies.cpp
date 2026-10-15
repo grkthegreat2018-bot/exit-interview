@@ -374,6 +374,8 @@ void AnomalyDirector::SpawnVisitorCorruption(VisitorSystem& vs) {
     a.instab = JF(d, "instab", 1.f);
     active.push_back(a);
     lastSpawnChannel = "visitor";
+    TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=visitor target=visitor",
+             a.id.c_str(), k.c_str());
 }
 
 void AnomalyDirector::SpawnIntruder(Office& office) {

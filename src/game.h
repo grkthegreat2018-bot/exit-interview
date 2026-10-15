@@ -63,6 +63,7 @@ private:
     bool godMode = false;           // EI_GOD / seq 'god' - deaths log instead of firing
     bool weekDone = false;          // persisted: survived the final scaled night once
     bool weekJustDone = false;      // transient: that completion was THIS shift
+    int nightBeforeEnv = -1;        // EI_NIGHT override saves back this value, not the forced night
     void CollectLights();           // build fx.lights from furniture + config
 
     // llm request ids
