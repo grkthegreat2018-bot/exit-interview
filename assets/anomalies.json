@@ -4292,5 +4292,182 @@
    },
    "instab": 1.4
   }
+ ],
+ "generic": [
+  {
+   "id": "gen_slide",
+   "kind": "moved",
+   "w": 3,
+   "instab": 1.0,
+   "desc": "something has slid to a new spot",
+   "keywords": [
+    "moved",
+    "shifted",
+    "slid",
+    "dragged",
+    "position",
+    "spot",
+    "wrong place"
+   ],
+   "effects": [
+    "slide"
+   ]
+  },
+  {
+   "id": "gen_turn",
+   "kind": "turned",
+   "w": 2,
+   "instab": 0.9,
+   "desc": "something is facing the wrong way",
+   "keywords": [
+    "turned",
+    "rotated",
+    "facing",
+    "around",
+    "backwards",
+    "spun"
+   ],
+   "effects": [
+    "turn"
+   ]
+  },
+  {
+   "id": "gen_pale",
+   "kind": "bleached",
+   "w": 2,
+   "instab": 0.8,
+   "desc": "something has lost its colour",
+   "keywords": [
+    "color",
+    "colour",
+    "pale",
+    "grey",
+    "dark",
+    "bleached",
+    "washed"
+   ],
+   "effects": [
+    "tint"
+   ]
+  },
+  {
+   "id": "gen_extra",
+   "kind": "new_object",
+   "w": 2,
+   "instab": 1.2,
+   "desc": "something new sits in the room that was not there",
+   "keywords": [
+    "new",
+    "appeared",
+    "extra",
+    "object",
+    "spawned",
+    "there"
+   ],
+   "effects": [
+    "spawn"
+   ]
+  },
+  {
+   "id": "gen_grow",
+   "kind": "wrong_size",
+   "w": 1,
+   "instab": 1.1,
+   "min_night": 2,
+   "desc": "something is the wrong size",
+   "keywords": [
+    "bigger",
+    "smaller",
+    "size",
+    "grown",
+    "huge",
+    "tiny",
+    "shrunk"
+   ],
+   "effects": [
+    "scale"
+   ]
+  },
+  {
+   "id": "gen_float",
+   "kind": "levitating",
+   "w": 1,
+   "instab": 1.5,
+   "min_night": 2,
+   "desc": "something hangs in the air",
+   "keywords": [
+    "floating",
+    "levitating",
+    "air",
+    "hanging",
+    "up",
+    "rise",
+    "risen"
+   ],
+   "effects": [
+    "float"
+   ]
+  },
+  {
+   "id": "gen_swap",
+   "kind": "swapped",
+   "w": 1,
+   "instab": 1.6,
+   "min_night": 2,
+   "desc": "two things have traded places",
+   "keywords": [
+    "swapped",
+    "switched",
+    "exchanged",
+    "places",
+    "traded",
+    "each other"
+   ],
+   "effects": [
+    "swap"
+   ]
+  },
+  {
+   "id": "gen_rearrange",
+   "kind": "rearranged",
+   "w": 0.4,
+   "instab": 2.2,
+   "min_night": 3,
+   "desc": "several pieces of furniture have traded places - the room is wrong",
+   "keywords": [
+    "rearranged",
+    "everything",
+    "moved",
+    "swapped",
+    "room",
+    "wrong",
+    "shifted",
+    "furniture"
+   ],
+   "effects": [
+    "rearrange"
+   ]
+  },
+  {
+   "id": "gen_gravity",
+   "kind": "gravity_fault",
+   "w": 0.25,
+   "instab": 2.6,
+   "min_night": 4,
+   "desc": "objects hang in the air - gravity let go of the room",
+   "keywords": [
+    "floating",
+    "hanging",
+    "air",
+    "ceiling",
+    "levitating",
+    "fell up",
+    "risen",
+    "flying"
+   ],
+   "effects": [
+    "gravity"
+   ]
+  }
  ]
 }

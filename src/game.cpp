@@ -693,6 +693,12 @@ void Game::ExecSeq(const std::string& c) {
         ad.FreezeInstability(arg.empty() ? 30.f : (float)atof(arg.c_str()));
     } else if (op == "notify") {
         Notify(arg);
+    } else if (op == "save") {       // write the shift save where it stands
+        Save();
+        TraceLog(LOG_INFO, "[dev] save written");
+    } else if (op == "load") {       // rebuild from the save - exercises round-trip
+        Load();
+        TraceLog(LOG_INFO, "[dev] save reloaded");
     } else if (op == "quit") {
         quit = true;
     }
@@ -1860,7 +1866,9 @@ void Game::DrawPlayerBody() {
     float yr = player.yaw * DEG2RAD;
     Vector3 at{player.pos.x + std::sin(yr) * 0.20f, 0.f,
                player.pos.z + std::cos(yr) * 0.20f};
-    HumanoidApp fp = playerApp; fp.build = 0.88f;   // narrower chest under the chin
+    // slightly scaled-down + narrower so the shoulder cap doesn't eat the
+    // lower third of the screen at shallow look-down angles
+    HumanoidApp fp = playerApp; fp.build = 0.86f; fp.height = 0.92f;
     DrawHumanoid(at, player.yaw, fp, crouch,
                  player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
                  player.moving ? 0.8f : 0.f, 0.f, {}, true);

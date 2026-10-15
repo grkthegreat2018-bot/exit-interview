@@ -381,29 +381,36 @@ void Game::UpdateCrew(float dt) {
             pk = pk * pk * (3.f - 2.f * pk);
             bool shoved = false;
             for (auto& o : e.outcomes) {
-                if (!o.hadTarget) continue;
-                Furni* f = office.Find(o.targetId);
-                if (!f || f->hidden) continue;          // vanished item: the box swap reads instead
-                float dx = f->pos.x - o.snapshot.pos.x, dy = f->pos.y - o.snapshot.pos.y,
-                      dz = f->pos.z - o.snapshot.pos.z, dr = f->rotY - o.snapshot.rotY;
-                Vector3 np{o.snapshot.pos.x + dx * (1.f - pk),
-                           o.snapshot.pos.y + dy * (1.f - pk),
-                           o.snapshot.pos.z + dz * (1.f - pk)};
-                // riders on the host's top track the same shove delta - only
-                // the ids captured at BeginResolve, never re-derived per frame
-                // (a passing neighbor would get swept along with the host)
-                Vector3 dd{np.x - f->pos.x, np.y - f->pos.y, np.z - f->pos.z};
-                for (auto& rid : o.riderIds)
-                    if (Furni* r = office.Find(rid)) r->pos = Vector3Add(r->pos, dd);
-                f->pos = np;
-                f->rotY = o.snapshot.rotY + dr * (1.f - pk);
-                f->size = {o.snapshot.size.x + (f->size.x - o.snapshot.size.x) * (1.f - pk),
-                           o.snapshot.size.y + (f->size.y - o.snapshot.size.y) * (1.f - pk),
-                           o.snapshot.size.z + (f->size.z - o.snapshot.size.z) * (1.f - pk)};
-                f->color.r = (unsigned char)(o.snapshot.color.r + (f->color.r - o.snapshot.color.r) * (1.f - pk));
-                f->color.g = (unsigned char)(o.snapshot.color.g + (f->color.g - o.snapshot.color.g) * (1.f - pk));
-                f->color.b = (unsigned char)(o.snapshot.color.b + (f->color.b - o.snapshot.color.b) * (1.f - pk));
-                if (dx * dx + dy * dy + dz * dz > 1e-5f || std::fabs(dr) > 0.4f) shoved = true;
+                // every host being restored: normal anomalies carry 1, swap
+                // carries 2, multi-target set-pieces list them in extraSnaps
+                std::vector<std::pair<std::string, const Furni*>> tgts;
+                if (o.hadTarget) tgts.push_back({o.targetId, &o.snapshot});
+                if (o.hadTarget2) tgts.push_back({o.snapshot2.id, &o.snapshot2});
+                for (auto& s : o.extraSnaps) tgts.push_back({s.id, &s});
+                for (auto& [tid, snap] : tgts) {
+                    Furni* f = office.Find(tid);
+                    if (!f || f->hidden) continue;      // vanished item: the box swap reads instead
+                    float dx = f->pos.x - snap->pos.x, dy = f->pos.y - snap->pos.y,
+                          dz = f->pos.z - snap->pos.z, dr = f->rotY - snap->rotY;
+                    Vector3 np{snap->pos.x + dx * (1.f - pk),
+                               snap->pos.y + dy * (1.f - pk),
+                               snap->pos.z + dz * (1.f - pk)};
+                    // riders ride the same shove delta - only the primary
+                    // host's captured ids (side hosts don't carry things)
+                    Vector3 dd{np.x - f->pos.x, np.y - f->pos.y, np.z - f->pos.z};
+                    if (snap == &o.snapshot)
+                        for (auto& rid : o.riderIds)
+                            if (Furni* r = office.Find(rid)) r->pos = Vector3Add(r->pos, dd);
+                    f->pos = np;
+                    f->rotY = snap->rotY + dr * (1.f - pk);
+                    f->size = {snap->size.x + (f->size.x - snap->size.x) * (1.f - pk),
+                               snap->size.y + (f->size.y - snap->size.y) * (1.f - pk),
+                               snap->size.z + (f->size.z - snap->size.z) * (1.f - pk)};
+                    f->color.r = (unsigned char)(snap->color.r + (f->color.r - snap->color.r) * (1.f - pk));
+                    f->color.g = (unsigned char)(snap->color.g + (f->color.g - snap->color.g) * (1.f - pk));
+                    f->color.b = (unsigned char)(snap->color.b + (f->color.b - snap->color.b) * (1.f - pk));
+                    if (dx * dx + dy * dy + dz * dz > 1e-5f || std::fabs(dr) > 0.4f) shoved = true;
+                }
             }
             if (shoved) {
                 // closest free worker plants both palms on it - reads as an

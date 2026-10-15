@@ -272,7 +272,12 @@ void AnomalyDirector::SpawnOffice(Office& office) {
     // the loud/violent kinds join later (they also drain harder, so an early
     // heavy spawn is a difficulty spike AND a fairness problem)
     float sevCap = NightScale("max_instab_per_spawn", 99.f);
-    std::vector<const json*> pool;
+    // weighted pool: authored defs (w default 1) + generic defs (effects are
+    // rolled per spawn - the catalog doesn't need one def per object)
+    std::vector<const json*> pool; std::vector<float> wts; float tot = 0;
+    auto push = [&](const json& d, float w) {
+        pool.push_back(&d); wts.push_back(w); tot += w;
+    };
     for (auto& d : defs["office"]) {
         std::string id = JS(d, "id");
         bool used = std::find(exhausted.begin(), exhausted.end(), id) != exhausted.end();
@@ -280,10 +285,28 @@ void AnomalyDirector::SpawnOffice(Office& office) {
         for (auto& a : active) if (a.id == id) live = true;
         if (!used && !live && !TargetWatched(d, office) && !Undetectable(d, office) &&
             JF(d, "instab", 1.f) <= sevCap)
-            pool.push_back(&d);
+            push(d, JF(d, "w", 1.f));
     }
+    if (defs.contains("generic"))
+        for (auto& d : defs["generic"]) {
+            std::string id = JS(d, "id");
+            bool live = false;
+            for (auto& a : active) if (a.id == id) live = true;
+            // generics re-roll per spawn so "used" doesn't exhaust them - a
+            // slid mug and a floated chair share the def but not the moment
+            if (!live && night >= JI(d, "min_night", 1) &&
+                JF(d, "instab", 1.f) <= sevCap)
+                push(d, JF(d, "w", 1.f) * 0.7f);
+        }
     if (pool.empty()) return;
-    const json& d = *pool[RandInt(0, (int)pool.size() - 1)];
+    float roll = Rand01() * tot; int pi = 0;
+    for (int i = 0; i < (int)pool.size(); i++) { roll -= wts[i]; if (roll <= 0) { pi = i; break; } }
+    const json& d = *pool[pi];
+    if (d.contains("effects")) {
+        if (!SpawnGeneric(d, office))
+            nextSpawnIn = std::min(nextSpawnIn, 5.f);   // no valid target - retry soon
+        return;
+    }
     ActiveAnomaly a;
     a.id = JS(d, "id");
     a.channel = "office";
@@ -304,6 +327,349 @@ void AnomalyDirector::SpawnOffice(Office& office) {
     active.push_back(a);
     TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=office target=%s",
              a.id.c_str(), a.kind.empty() ? "-" : a.kind.c_str(), tgt.empty() ? "-" : tgt.c_str());
+}
+
+// ---------- generic mutations: nearly anything in the room can misbehave ----------
+// A "generic" def carries an "effects" whitelist instead of a fixed
+// target+mutation; each spawn rolls a random valid target and builds the
+// mutation on the fly. All moves are collision-aware (AABB vs the room's
+// furniture + solids), all deltas are big enough to actually read, and
+// positional changes never play out while the player is looking at them.
+
+namespace {
+// room plumbing never moves: walls, door, window gear, lights, the desk
+// itself, the chair the visitor occupies, and the PC tower (hide pocket
+// stays honest). Notes are spawned props - they don't re-anomalize.
+bool GenOk(const Furni& f) {
+    if (f.hidden) return false;
+    switch (f.ft) {
+        case FT::Desk: case FT::PcTower: case FT::Poster: case FT::WallClock:
+        case FT::Blinds: case FT::Outlet: case FT::Switch: case FT::Door:
+        case FT::CeilingLight: case FT::Note: case FT::Monitor:
+        case FT::VisitorChair: case FT::Rug:
+            return false;
+        default: return true;
+    }
+}
+bool GenRotOk(FT t) {   // a rotation must be VISIBLE - symmetric props can't "turn"
+    switch (t) {
+        case FT::OfficeChair: case FT::FilingCabinet: case FT::Bookshelf:
+        case FT::Printer: case FT::Couch: case FT::Bench: case FT::Plant:
+        case FT::WaterCooler: case FT::DeskLamp: case FT::Vase: case FT::Bin:
+            return true;
+        default: return false;
+    }
+}
+AABB GenBox(Vector3 pos, Vector3 size, float rotY) {
+    float c = std::cos(rotY * DEG2RAD), s = std::sin(rotY * DEG2RAD);
+    float hx = (std::fabs(size.x * c) + std::fabs(size.z * s)) * 0.5f;
+    float hz = (std::fabs(size.x * s) + std::fabs(size.z * c)) * 0.5f;
+    return {{pos.x - hx, pos.y, pos.z - hz}, {pos.x + hx, pos.y + size.y, pos.z + hz}};
+}
+bool BoxesHit(const AABB& a, const AABB& b, float pad) {
+    return a.mn.x < b.mx.x + pad && a.mx.x > b.mn.x - pad &&
+           a.mn.y < b.mx.y + pad && a.mx.y > b.mn.y - pad &&
+           a.mn.z < b.mx.z + pad && a.mx.z > b.mn.z - pad;
+}
+}  // namespace
+
+bool AnomalyDirector::SpawnGeneric(const json& def, Office& office) {
+    // clean targets only: nothing already anomalous, no spawned props
+    auto clean = [&](const Furni& f) {
+        for (auto* l : {&active, &pending}) for (auto& a : *l) {
+            if (a.hadTarget && a.snapshot.id == f.id) return false;
+            if (a.hadTarget2 && a.snapshot2.id == f.id) return false;
+            if (!a.spawnedId.empty() && a.spawnedId == f.id) return false;
+            for (auto& s : a.extraSnaps) if (s.id == f.id) return false;
+        }
+        return true;
+    };
+    auto watched = [&](const Furni& f) {
+        return seenFn && seenFn({f.pos.x, f.pos.y + f.size.y * 0.5f, f.pos.z});
+    };
+    // a spot is free when its box hits nothing else and stays inside the room
+    auto freeAt = [&](const Furni& f, Vector3 p, float rotY, float pad) {
+        AABB box = GenBox(p, f.size, rotY);
+        const AABB& rb = (f.room == "waiting") ? office.waitingBounds : office.bounds;
+        if (box.mn.x < rb.mn.x + pad || box.mx.x > rb.mx.x - pad ||
+            box.mn.z < rb.mn.z + pad || box.mx.z > rb.mx.z - pad) return false;
+        for (auto& o : office.items) {
+            if (o.id == f.id || o.hidden) continue;
+            if (o.room != f.room) continue;
+            if (BoxesHit(box, GenBox(o.pos, o.size, o.rotY), pad)) return false;
+        }
+        return true;
+    };
+
+    std::vector<const Furni*> flr, top;
+    auto hasRiders = [&](const Furni& f) {
+        for (auto& r : office.items) if (office.RestsOn(r, f)) return true;
+        return false;
+    };
+    for (auto& f : office.items)
+        if (f.room == "office" && GenOk(f) && clean(f))
+            (f.pos.y > 0.3f ? top : flr).push_back(&f);
+    if (flr.empty() && top.empty()) return false;
+
+    std::vector<std::string> effs;
+    for (auto& e : def["effects"]) effs.push_back(e.get<std::string>());
+    for (int i = (int)effs.size() - 1; i > 0; i--)
+        std::swap(effs[i], effs[RandInt(0, i)]);
+
+    ActiveAnomaly a;
+    a.id = JS(def, "id");
+    a.channel = "office"; lastSpawnChannel = "office";
+    a.kind = JS(def, "kind");
+    a.t0 = elapsed;
+    a.instab = JF(def, "instab", 1.f);
+    for (auto& k : def["keywords"]) a.keywords.push_back(k.get<std::string>());
+
+    std::string done;
+    auto apply = [&](const std::string& tid, const json& m, float dur = 0.6f) {
+        office.ApplyMutationAnimated(tid, m, dur);
+        a.genMuts.push_back({{"id", tid}, {"mut", m}});   // for save/load re-apply
+    };
+    for (auto& ef : effs) {
+        if (ef == "slide") {
+            // floor items relocate across the room; desk-top items slide to a
+            // new spot ON their host surface - a mug can't end up mid-air
+            std::vector<const Furni*> cand = flr;
+            for (auto* f : top) cand.push_back(f);
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const Furni* f = cand[RandInt(0, (int)cand.size() - 1)];
+                if (watched(*f)) continue;
+                if (f->pos.y > 0.3f) {
+                    // top slide: stay on the host's surface
+                    const Furni* host = nullptr;
+                    for (auto& h : office.items) if (office.RestsOn(*f, h)) { host = &h; break; }
+                    if (!host) continue;
+                    for (int k = 0; k < 10 && done.empty(); k++) {
+                        float mx = (host->size.x - f->size.x) * 0.5f - 0.05f;
+                        float mz = (host->size.z - f->size.z) * 0.5f - 0.05f;
+                        if (mx <= 0.02f || mz <= 0.02f) break;
+                        Vector3 np{host->pos.x + RandRange(-mx, mx), f->pos.y,
+                                   host->pos.z + RandRange(-mz, mz)};
+                        if (Vector3Distance({np.x, 0, np.z}, {f->pos.x, 0, f->pos.z}) < 0.45f) continue;
+                        bool hit = false;
+                        for (auto& o : office.items)
+                            if (o.id != f->id && office.RestsOn(o, *host) &&
+                                BoxesHit(GenBox(np, f->size, f->rotY),
+                                         GenBox(o.pos, o.size, o.rotY), 0.02f)) hit = true;
+                        if (hit) continue;
+                        a.snapshot = *f; a.hadTarget = true;
+                        json m; m["pos_set"] = {np.x, np.y, np.z};
+                        apply(f->id, m);
+                        done = f->id;
+                    }
+                } else {
+                    // floor slide: somewhere else in the room, >=0.8m away
+                    const AABB& rb = office.bounds;
+                    for (int k = 0; k < 12 && done.empty(); k++) {
+                        Vector3 np{RandRange(rb.mn.x + f->size.x * 0.6f, rb.mx.x - f->size.x * 0.6f),
+                                   0.f,
+                                   RandRange(rb.mn.z + f->size.z * 0.6f, rb.mx.z - f->size.z * 0.6f)};
+                        if (Vector3Distance({np.x, 0, np.z}, {f->pos.x, 0, f->pos.z}) < 0.8f) continue;
+                        if (!freeAt(*f, np, f->rotY, 0.10f)) continue;
+                        a.snapshot = *f; a.hadTarget = true;
+                        json m; m["pos_set"] = {np.x, np.y, np.z};
+                        apply(f->id, m);
+                        done = f->id;
+                    }
+                }
+            }
+        } else if (ef == "float") {
+            // a floor piece rises and hangs - pos.y lifts it off its support,
+            // the per-frame `floating` flag gives it the wobble
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const Furni* f = flr.empty() ? nullptr : flr[RandInt(0, (int)flr.size() - 1)];
+                if (!f || watched(*f)) continue;
+                float lift = RandRange(0.75f, 1.7f);
+                Vector3 np{f->pos.x, f->pos.y + lift, f->pos.z};
+                if (np.y + f->size.y > 2.75f) continue;              // ceiling clearance
+                if (!freeAt(*f, np, f->rotY, 0.10f)) continue;
+                a.snapshot = *f; a.hadTarget = true;
+                json m; m["pos_set"] = {np.x, np.y, np.z};
+                apply(f->id, m, 1.4f);        // slow rise
+                done = f->id;
+            }
+        } else if (ef == "turn") {
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const Furni* f = flr.empty() ? nullptr : flr[RandInt(0, (int)flr.size() - 1)];
+                if (!f || !GenRotOk(f->ft) || watched(*f)) continue;
+                float nr = f->rotY + (Rand01() < 0.5f ? -1.f : 1.f) * RandRange(60.f, 240.f);
+                if (!freeAt(*f, f->pos, nr, 0.04f)) continue;
+                a.snapshot = *f; a.hadTarget = true;
+                json m; m["rot_set"] = nr;
+                apply(f->id, m);
+                done = f->id;
+            }
+        } else if (ef == "swap") {
+            // two floor pieces trade places - sizes must each fit the other's spot
+            for (int tries = 0; tries < 16 && done.empty(); tries++) {
+                const Furni* f1 = flr[RandInt(0, (int)flr.size() - 1)];
+                const Furni* f2 = flr[RandInt(0, (int)flr.size() - 1)];
+                if (f1 == f2 || watched(*f1) || watched(*f2)) continue;
+                if (Vector3Distance(f1->pos, f2->pos) < 1.4f) continue;
+                // swap must fit both ways
+                AABB b1 = GenBox(f2->pos, f1->size, f1->rotY);
+                AABB b2 = GenBox(f1->pos, f2->size, f2->rotY);
+                bool ok = true;
+                for (auto& o : office.items) {
+                    if (o.id == f1->id || o.id == f2->id || o.hidden || o.room != "office") continue;
+                    AABB ob = GenBox(o.pos, o.size, o.rotY);
+                    if (BoxesHit(b1, ob, 0.08f) || BoxesHit(b2, ob, 0.08f)) ok = false;
+                }
+                if (!ok) continue;
+                a.snapshot = *f1; a.hadTarget = true;
+                a.snapshot2 = *f2; a.hadTarget2 = true;
+                json m1; m1["pos_set"] = {f2->pos.x, f2->pos.y, f2->pos.z};
+                apply(f1->id, m1, 0.9f);
+                json m2; m2["pos_set"] = {f1->pos.x, f1->pos.y, f1->pos.z};
+                apply(f2->id, m2, 0.9f);
+                done = f1->id + "+" + f2->id;
+            }
+        } else if (ef == "scale") {
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const Furni* f = flr.empty() ? nullptr : flr[RandInt(0, (int)flr.size() - 1)];
+                if (!f) continue;
+                // small/mid props only - a 2m bookshelf doubling breaks the room
+                if (f->size.x > 0.9f || f->size.y > 1.1f || f->size.z > 0.9f) continue;
+                float s = Rand01() < 0.5f ? RandRange(0.5f, 0.68f) : RandRange(1.45f, 1.8f);
+                Vector3 ns{f->size.x * s, f->size.y * s, f->size.z * s};
+                if (s > 1.f) {   // growth must not clip through neighbours
+                    Furni probe = *f; probe.size = ns;
+                    if (!freeAt(probe, f->pos, f->rotY, 0.03f)) continue;
+                }
+                a.snapshot = *f; a.hadTarget = true;
+                json m; m["scale"] = {s, s, s};
+                apply(f->id, m);
+                done = f->id;
+            }
+        } else if (ef == "tint") {
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const Furni* f = flr.empty() ? nullptr : flr[RandInt(0, (int)flr.size() - 1)];
+                if (!f) continue;
+                // bled out: cold grey-rot wash, obviously not the same colour
+                Color nc{(unsigned char)(f->color.r * 0.42f + 30),
+                         (unsigned char)(f->color.g * 0.42f + 26),
+                         (unsigned char)(f->color.b * 0.42f + 34), 255};
+                if (std::abs((int)nc.r - f->color.r) < 25 &&
+                    std::abs((int)nc.g - f->color.g) < 25 &&
+                    std::abs((int)nc.b - f->color.b) < 25)
+                    nc = Color{34, 30, 40, 255};   // already-dark item -> near-black wrong
+                a.snapshot = *f; a.hadTarget = true;
+                json m; m["color"] = {nc.r, nc.g, nc.b, nc.a};
+                apply(f->id, m);
+                done = f->id;
+            }
+        } else if (ef == "rearrange") {
+            // set-piece: three floor pieces rotate positions and the room
+            // comes back wrong. each landing must be free once the other two
+            // movers are ignored (they're all in transit simultaneously)
+            std::vector<const Furni*> trio;
+            for (int tries = 0; tries < 30 && (int)trio.size() < 3; tries++) {
+                const Furni* f = flr.empty() ? nullptr : flr[RandInt(0, (int)flr.size() - 1)];
+                if (!f || watched(*f) || hasRiders(*f)) continue;   // riders would be left mid-air
+                bool dup = false;
+                for (auto* t : trio) if (t == f) dup = true;
+                if (!dup) trio.push_back(f);
+            }
+            if ((int)trio.size() < 3) break;
+            bool ok = true;
+            for (int i = 0; i < 3 && ok; i++) {
+                AABB land = GenBox(trio[(i + 1) % 3]->pos, trio[i]->size, trio[i]->rotY);
+                for (auto& o : office.items) {
+                    if (o.hidden || o.room != "office") continue;
+                    bool participant = false;
+                    for (auto* t : trio) if (o.id == t->id) participant = true;
+                    if (participant) continue;
+                    if (BoxesHit(land, GenBox(o.pos, o.size, o.rotY), 0.08f)) { ok = false; break; }
+                }
+            }
+            if (!ok) break;
+            for (int i = 0; i < 3; i++) {
+                a.extraSnaps.push_back(*trio[i]);
+                a.keywords.push_back(trio[i]->id);
+            }
+            for (int i = 0; i < 3; i++) {
+                Vector3 dest = trio[(i + 1) % 3]->pos;
+                json m; m["pos_set"] = {dest.x, dest.y, dest.z};
+                m["rot_set"] = trio[i]->rotY + RandRange(-60.f, 60.f);
+                apply(trio[i]->id, m, 1.1f);
+            }
+            done = "room";
+        } else if (ef == "gravity") {
+            // set-piece: up to four smallish props rise and hang mid-air.
+            // floor pieces lift straight up; desk-top props lift off their
+            // host - everything gets the `floating` wobble once airborne
+            std::vector<const Furni*> lifts;
+            for (int tries = 0; tries < 40 && (int)lifts.size() < 4; tries++) {
+                bool pickTop = !top.empty() && (flr.empty() || Rand01() < 0.4f);
+                auto& src = pickTop ? top : flr;
+                if (src.empty()) continue;
+                const Furni* f = src[RandInt(0, (int)src.size() - 1)];
+                if (f->size.x > 1.3f || watched(*f) || hasRiders(*f)) continue;
+                bool dup = false;
+                for (auto* t : lifts) if (t == f) dup = true;
+                if (dup) continue;
+                float lift = RandRange(0.9f, 1.9f);
+                Vector3 np{f->pos.x, f->pos.y + lift, f->pos.z};
+                if (np.y + f->size.y > 2.75f) continue;
+                if (!freeAt(*f, np, f->rotY, 0.10f)) continue;
+                lifts.push_back(f);
+                a.extraSnaps.push_back(*f);
+                a.keywords.push_back(f->id);
+                json m; m["pos_set"] = {np.x, np.y, np.z};
+                apply(f->id, m, 1.6f);   // slow wrong rise
+            }
+            if (lifts.empty()) break;
+            done = "airborne";
+        } else if (ef == "spawn") {
+            // a new prop the room didn't have: note on the floor or a small
+            // vase/cup - always somewhere free, always findable
+            static const char* kSpawnTypes[] = {"note", "vase", "mug", "bin"};
+            for (int tries = 0; tries < 14 && done.empty(); tries++) {
+                const char* ty = kSpawnTypes[RandInt(0, 3)];
+                Furni probe;
+                probe.ft = TypeOf(ty); probe.room = "office";
+                probe.size = (std::string(ty) == "note") ? Vector3{0.22f, 0.01f, 0.3f}
+                           : (std::string(ty) == "vase") ? Vector3{0.18f, 0.42f, 0.18f}
+                           : (std::string(ty) == "mug")  ? Vector3{0.11f, 0.12f, 0.11f}
+                           :                              Vector3{0.32f, 0.42f, 0.32f};
+                const AABB& rb = office.bounds;
+                Vector3 np{RandRange(rb.mn.x + 0.4f, rb.mx.x - 0.4f), 0.f,
+                           RandRange(rb.mn.z + 0.4f, rb.mx.z - 0.4f)};
+                if (!freeAt(probe, np, 0.f, 0.12f)) continue;
+                std::string nid = "gen_" + std::to_string(RandInt(0, 99999));
+                json m; m["spawn"] = {{"id", nid}, {"type", ty},
+                    {"pos", {np.x, np.y, np.z}},
+                    {"size", {probe.size.x, probe.size.y, probe.size.z}},
+                    {"rot", RandRange(0.f, 360.f)},
+                    {"color", {150, 148, 150}}, {"room", "office"}};
+                if (std::string(ty) == "note") m["spawn"]["interact"] = "note";
+                office.ApplyMutationAnimated("", m);
+                a.genSpawn = m;            // save/load respawns the same prop
+                a.spawnedId = nid;
+                done = nid;
+            }
+        }
+    }
+    if (done.empty()) return false;
+
+    // reports should name the thing that changed - splice the actual target
+    // id/type into the keyword net so "the chair moved" matches, not just "moved"
+    a.desc = JS(def, "desc");
+    if (a.hadTarget) {
+        a.keywords.push_back(a.snapshot.id);
+        a.keywords.push_back(a.snapshot.type);
+        a.desc += " (" + a.snapshot.type + ")";
+    }
+    if (a.hadTarget2) a.keywords.push_back(a.snapshot2.id);
+    for (auto& s : a.extraSnaps) a.keywords.push_back(s.type);
+    active.push_back(a);
+    TraceLog(LOG_INFO, "[anomaly] spawned %s kind=%s channel=office target=%s (generic)",
+             a.id.c_str(), a.kind.empty() ? "-" : a.kind.c_str(), done.c_str());
+    return true;
 }
 
 void AnomalyDirector::SpawnExterior(Office& office, VisitorSystem& vs) {
@@ -451,6 +817,8 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
         if (it->channel != channel || it->id != anomalyId) continue;
         o.ok = true; o.id = it->id; o.kind = it->kind; o.channel = channel; o.deferred = deferFx;
         o.hadTarget = it->hadTarget; o.snapshot = it->snapshot; o.targetId = it->snapshot.id;
+        o.hadTarget2 = it->hadTarget2; o.snapshot2 = it->snapshot2;
+        o.extraSnaps = it->extraSnaps;
         o.spawnedId = it->spawnedId;
         // where the crew should stand to fix this
         o.workPos = (channel == "exterior") ? Vector3{0, 0, -8.4f} : Vector3{0.9f, 0, 0.4f};
@@ -463,6 +831,7 @@ ResolveOutcome AnomalyDirector::BeginResolve(const std::string& channel, const s
             if (Furni* hf = office.Find(o.targetId))
                 for (auto& it2 : office.items)
                     if (office.RestsOn(it2, *hf)) o.riderIds.push_back(it2.id);
+        else if (!o.extraSnaps.empty()) o.workPos = o.extraSnaps[0].pos;
         else if (!o.spawnedId.empty()) { if (Furni* f = office.Find(o.spawnedId)) o.workPos = f->pos; }
         else if (o.kind.rfind("figure", 0) == 0) o.workPos = vs.figurePos;
         else if (o.kind == "banging_door" || o.kind == "banging_window") o.workPos = vs.bangerPos;
@@ -518,6 +887,10 @@ void AnomalyDirector::ApplyResolveFx(const ResolveOutcome& o, Office& office) {
                 if (Furni* r = office.Find(rid)) r->pos = Vector3Add(r->pos, d);
             *f = o.snapshot;
         }
+    if (o.hadTarget2)
+        if (Furni* f2 = office.Find(o.snapshot2.id)) *f2 = o.snapshot2;
+    for (auto& s : o.extraSnaps)
+        if (Furni* f = office.Find(s.id)) *f = s;
     // deferred spawned furniture is carried out by the crew instead of removed here
     if (!o.spawnedId.empty() && !o.deferred) office.RemoveSpawned(o.spawnedId);
     std::erase_if(pending, [&](const ActiveAnomaly& a) { return a.id == o.id; });
@@ -826,6 +1199,10 @@ bool AnomalyDirector::ApplyRemixJson(const std::string& text, Office& office, st
 }
 
 void AnomalyDirector::DebugForceOffice(const std::string& id, Office& office) {
+    // generic defs roll their own target+effect per spawn
+    if (defs.contains("generic"))
+        for (auto& d : defs["generic"])
+            if (JS(d, "id") == id) { SpawnGeneric(d, office); return; }
     for (auto& d : defs["office"]) {
         if (JS(d, "id") != id) continue;
         ActiveAnomaly a;
@@ -853,7 +1230,8 @@ json AnomalyDirector::Serialize() const {
     json arr = json::array();
     for (auto& a : active)
         arr.push_back({{"id", a.id}, {"channel", a.channel}, {"kind", a.kind},
-                       {"target", a.hadTarget ? a.snapshot.id : ""}, {"spawned", a.spawnedId}});
+                       {"target", a.hadTarget ? a.snapshot.id : ""}, {"spawned", a.spawnedId},
+                       {"genMuts", a.genMuts}, {"genSpawn", a.genSpawn}});
     j["active"] = arr;
     j["intruder"] = intruderActive;
     if (intruderActive) {
@@ -888,6 +1266,30 @@ void AnomalyDirector::Deserialize(const json& j, Office& office, VisitorSystem& 
                     if (d["mutation"].contains("spawn")) a.spawnedId = JS(d["mutation"]["spawn"], "id");
                     active.push_back(a);
                 }
+            }
+            // generic defs rolled their world effect at spawn - the stored
+            // mutations re-apply the exact same deltas over the fresh office
+            for (auto& d : defs["generic"]) {
+                if (JS(d, "id") != e.value("id", std::string())) continue;
+                ActiveAnomaly a;
+                a.id = JS(d, "id"); a.channel = "office"; a.kind = JS(d, "kind");
+                a.desc = JS(d, "desc"); a.instab = JF(d, "instab", 1.f);
+                for (auto& k : d["keywords"]) a.keywords.push_back(k.get<std::string>());
+                int ti = 0;
+                for (auto& tm : e.value("genMuts", json::array())) {
+                    std::string tid = JS(tm, "id");
+                    Furni* f = office.Find(tid); if (!f) continue;
+                    if (ti == 0) { a.hadTarget = true; a.snapshot = *f; }
+                    else if (ti == 1) { a.hadTarget2 = true; a.snapshot2 = *f; }
+                    else a.extraSnaps.push_back(*f);
+                    office.ApplyMutation(tid, tm["mut"]);
+                    ti++;
+                }
+                if (e.contains("genSpawn") && e["genSpawn"].is_object()) {
+                    office.ApplyMutation("", e["genSpawn"]);
+                    a.spawnedId = JS(e["genSpawn"]["spawn"], "id");
+                }
+                active.push_back(a);
             }
         } else {
             ActiveAnomaly a;

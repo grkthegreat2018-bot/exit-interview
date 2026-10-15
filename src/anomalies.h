@@ -11,6 +11,13 @@ struct ActiveAnomaly {
     // revert data
     bool hadTarget = false;
     Furni snapshot;
+    bool hadTarget2 = false;        // generic "swap" anomalies take two hosts
+    Furni snapshot2;
+    std::vector<Furni> extraSnaps;  // set-piece anomalies touch N items at once
+    // generic defs roll their world effect at spawn - the rolled mutations are
+    // kept so a save/load can re-apply the exact same deltas to pristine furni
+    nlohmann::json genMuts = nlohmann::json::array();   // [{id, mut}]
+    nlohmann::json genSpawn;                            // spawn mutation, if any
     std::string spawnedId;
     std::string kind;           // exterior kind
     float t0 = 0;
@@ -22,6 +29,9 @@ struct ResolveOutcome {
     std::string id, kind, channel, targetId;
     Furni snapshot;
     bool hadTarget = false;
+    Furni snapshot2;            // generic swap anomalies restore a second host
+    bool hadTarget2 = false;
+    std::vector<Furni> extraSnaps;  // set-piece anomalies restore N items
     std::string spawnedId;      // furniture the crew carries out
     std::vector<std::string> riderIds;  // items on the host's top, captured once
     Vector3 workPos{0, 0, 0};   // where the crew stands
@@ -142,6 +152,7 @@ private:
     bool Undetectable(const json& d, Office& office,
                       const VisitorSystem* vs = nullptr) const; // ghost-anomaly guard
     void SpawnOffice(Office& office);
+    bool SpawnGeneric(const json& def, Office& office);   // target+effect rolled per spawn
     void SpawnExterior(Office& office, VisitorSystem& vs);
     void SpawnVisitorCorruption(VisitorSystem& vs);
     void SpawnIntruder(Office& office);
