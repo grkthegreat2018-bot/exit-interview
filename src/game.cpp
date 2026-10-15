@@ -1914,14 +1914,22 @@ void Game::DrawPlayerBody() {
         return;
     }
     bool crouch = player.crouching || player.hiding;
-    // nudge the body forward along the facing so a straight-down look reads
-    // legs and shoes, not an eye-level chest slab
+    // your own chin hides your chest until you actually look down - and the
+    // mid-pitch band just shows a shoulder slab, so the body only appears
+    // once the view is steep enough to read chest-front -> legs -> feet
+    if (!crouch && player.pitch > -48.f) return;
+    // far enough forward that the eye axis clears the shoulder line: a
+    // straight-down look then reads chest-front -> stomach -> legs -> feet
+    // instead of the top face of the torso
     float yr = player.yaw * DEG2RAD;
-    Vector3 at{player.pos.x + std::sin(yr) * 0.20f, 0.f,
-               player.pos.z + std::cos(yr) * 0.20f};
-    // slightly scaled-down + narrower so the shoulder cap doesn't eat the
-    // lower third of the screen at shallow look-down angles
-    HumanoidApp fp = playerApp; fp.build = 0.86f; fp.height = 0.92f;
+    // the gate blends, not pops: just past the threshold the body sits
+    // sunken (only the upper chest clears the floor plane at the bottom of
+    // frame) and rises to full height by -62 deg
+    float band = crouch ? 1.f : std::clamp((-player.pitch - 48.f) / 14.f, 0.f, 1.f);
+    Vector3 at{player.pos.x + std::sin(yr) * 0.30f, -(1.f - band) * 1.35f,
+               player.pos.z + std::cos(yr) * 0.30f};
+    // scaled-down + narrower so the silhouette tucks under the chin
+    HumanoidApp fp = playerApp; fp.build = 0.80f; fp.height = 0.90f;
     DrawHumanoid(at, player.yaw, fp, crouch,
                  player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
                  player.moving ? 0.8f : 0.f, 0.f, {}, true);
