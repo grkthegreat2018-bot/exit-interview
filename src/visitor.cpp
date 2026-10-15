@@ -99,7 +99,17 @@ HumanoidApp AppFromJson(const json& j) {
             a.tieCol = ties[(h >> 7) % 5];
         }
         if (!app || !app->contains("badge")) a.badge = ((h >> 28) % 10) < 6;
+        // bodies: nobody on a real floor is the same height - seeded so a
+        // roster entry keeps its proportions run to run
+        if (!app || !app->contains("height")) {
+            a.height = 0.93f + ((h >> 15) % 20) * 0.0105f;        // ~1.60..1.94m
+            if (a.female) a.height -= 0.045f;
+        }
+        if (!app || !app->contains("build"))
+            a.build = 0.92f + ((h >> 23) % 17) * 0.011f;          // slight..broad
     }
+    a.height = std::clamp(a.height, 0.85f, 1.30f);   // JSON extremes allowed, never absurd
+    a.build = std::clamp(a.build, 0.85f, 1.20f);
     return a;
 }
 
@@ -131,7 +141,7 @@ void DrawHumanoidEyes() {
     g_eyeDraws.clear();
 }
 
-void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated, float animT, float armRaise, float seatH, float walkAmt, float detain, Vector3 look) {
+void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated, float animT, float armRaise, float seatH, float walkAmt, float detain, Vector3 look, bool headless) {
     // grounding blob on the floor (y fixed: feet.y can ride a ladder lift)
     DrawBlobShadow({feet.x, 0.015f, feet.z}, 0.40f * a.height, 0.40f * a.height, 0.40f);
     float h = 1.72f * a.height;
@@ -159,9 +169,9 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
 
     // build: women carry a slightly narrower frame than the default block.
     // waist < chest < hips is what sells "person" over "traffic cone"
-    float shoulderW = (a.female ? 0.14f : 0.158f) * a.height;
+    float shoulderW = (a.female ? 0.14f : 0.158f) * a.height * a.build;
     // male hips barely exceed the waist; female figures keep the oval flare
-    float hipW = (a.female ? 0.165f : 0.145f) * a.height;
+    float hipW = (a.female ? 0.165f : 0.145f) * a.height * a.build;
     float waistW = shoulderW * (a.female ? 0.80f : 0.85f);
     // spine leans a touch: seated people hunch, detainees bow, nobody
     // stands at literal parade rest
@@ -269,6 +279,7 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
     // and down off a single anchor instead of dangling a lowered head alone
     Vector3 hb{top.x + f.x * 0.05f * detain, headY - 0.06f * a.height * detain,
                top.z + f.z * 0.05f * detain};
+    if (!headless) {   // first-person body: camera sits where the head would be
     // trapezius slope + neck - shoulders flow into the neck instead of a
     // ball perched on a stick
     rlNormal3f(f.x, 0.4f, f.z);
@@ -469,6 +480,7 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                      hb.z + f.z * 0.068f * hh + r.z * 0.075f * s * hh}, 0.030f * hh, bc);
         }
     }
+    }   // !headless
     // arms - two segments with a real elbow; armRaise lerps hands from
     // hanging to raised overhead (ladder work), detain pins wrists behind
     // the back (security escort). Shoulders anchor on `top` so they lean
@@ -859,11 +871,49 @@ void VisitorSystem::WalkAlong(Visitor& v, const std::vector<Vector2>& path, floa
     v.animT += dt * 6.f;
 }
 
-void VisitorSystem::SpawnScheduled(Office& office) {
+void VisitorSystem::SpawnScheduled(Office& office, bool freshOnly) {
     if (scheduleIdx >= (int)schedule.size()) return;
     auto& e = schedule[scheduleIdx];
     const json* person = RosterFind(JS(e, "visitor"));
     if (!person) { scheduleIdx++; return; }
+    // promotion: the person whose slot just came up may already be sitting
+    // in the waiting room (ambient personas are biased toward upcoming book
+    // entries). They stand up off the bench and walk to the door themselves.
+    // Early calls always pull a fresh walk-in instead - front desk summons
+    // someone new, never the person the player just watched sit down.
+    if (!freshOnly && !ambientMutated && !waitingEmpty) {
+        for (size_t i = 0; i < ambient.size(); i++) {
+            auto& a = ambient[i];
+            if (a.persona != person || a.seatIdx < 0 || a.walking || a.leaving) continue;
+            cur = Visitor{};
+            cur.person = person;
+            cur.app = a.app;
+            cur.promoted = true;
+            cur.cowerSeatIdx = a.seatIdx;
+            cur.cowerStand = a.standSpot; cur.cowerSeat = a.seatPos;
+            cur.cowerYaw = a.seatYaw;
+            cur.pos = a.seatPos; cur.yaw = a.yaw;
+            cur.cowerT = 1.f;                    // seated - the Cower rise-out walks them to the door
+            cur.state = VState::Cower;
+            cur.slotIdx = scheduleIdx;
+            cur.seated = true; cur.seatH = 0.25f;
+            ambient.erase(ambient.begin() + i);
+            // fall through to the slot bookkeeping below (anomaly tag etc.)
+            cur.anomaly = JS(e, "anomaly", "");
+            if (cur.anomaly.empty() && person->contains("always_anomaly"))
+                cur.anomaly = JS(*person, "always_anomaly");
+            if (night < 2 && cur.anomaly == "impossible_visitor") cur.anomaly.clear();
+            if (night < 3 && cur.anomaly == "hostile") cur.anomaly.clear();
+            if (cur.anomaly.empty()) cur.app.eyes = "normal";
+            transcript.clear();
+            scheduleIdx++;
+            knocked = false;
+            if (notifyFn) notifyFn(cur.Name() + " gets up from the waiting room.");
+            TraceLog(LOG_INFO, "[visitor] promoted ambient %s -> scheduled slot %d",
+                     cur.Name().c_str(), cur.slotIdx);
+            return;
+        }
+    }
     cur = Visitor{};
     cur.person = person;
     cur.anomaly = JS(e, "anomaly", "");
@@ -911,7 +961,7 @@ std::string VisitorSystem::NextName() const {
 
 bool VisitorSystem::CallNextEarly(Office& office) {
     if (cur.Active() || scheduleIdx >= (int)schedule.size()) return false;
-    SpawnScheduled(office);
+    SpawnScheduled(office, true);   // early calls always pull a fresh walk-in
     return true;
 }
 
@@ -959,6 +1009,7 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
                            const std::function<void(const std::string&)>& notify,
                            const std::function<void()>& onKnock,
                            const std::function<void(Vector3)>& onLunge) {
+    notifyFn = notify;   // SpawnScheduled's promotion path announces itself
     // scheduled spawns
     if (scheduleIdx < (int)schedule.size()) {
         float t = JF(schedule[scheduleIdx], "time", -1);
@@ -979,6 +1030,40 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
             if (doorPhysOpen) cur.doorSeenT = 0;
             else if (cur.doorSeenT < 900.f) cur.doorSeenT += dt;
         }
+    }
+
+    // something is wrong in the doorway - an inbound visitor sees the figure
+    // or hears the pounding and falls back to a bench until it passes. No
+    // penalty, no auto-leave: Cower pauses their approach entirely.
+    bool doorThreat = bangerActive || figureActive;
+    if (doorThreat && (cur.state == VState::ToDoor || cur.state == VState::AtDoor)) {
+        cur.state = VState::Cower;
+        cur.cowerT = -1.f; cur.cowerRising = false;
+        cur.seated = false;
+        float bd = 1e9f; int bi = -1;
+        for (int i = 0; i < (int)office.waitingSeats.size(); i++) {
+            bool taken = false;
+            for (auto& o : ambient) if (o.seatIdx == i) taken = true;
+            if (taken) continue;
+            float dx = office.waitingSeats[i].pos.x - cur.pos.x;
+            float dz = office.waitingSeats[i].pos.z - cur.pos.z;
+            float d = dx * dx + dz * dz;
+            if (d < bd) { bd = d; bi = i; }
+        }
+        cur.cowerSeatIdx = bi;
+        if (bi >= 0) {
+            const auto& st = office.waitingSeats[bi];
+            float syr = st.yaw * DEG2RAD;
+            cur.cowerSeat = {st.pos.x + std::sin(syr) * 0.08f, st.pos.y,
+                             st.pos.z + std::cos(syr) * 0.08f};
+            cur.cowerStand = {st.pos.x + std::sin(syr) * 0.45f, 0.f,
+                              st.pos.z + std::cos(syr) * 0.45f};
+            cur.cowerYaw = st.yaw;
+        } else { cur.cowerStand = cur.pos; cur.cowerSeat = cur.pos; }
+        notify(cur.Name() + " backs away from the door - something out there has them spooked.");
+        TraceLog(LOG_INFO, "[visitor] %s cowers to bench %d (threat: %s%s)",
+                 cur.Name().c_str(), bi,
+                 bangerActive ? "banger" : "", figureActive ? "figure" : "");
     }
 
     switch (cur.state) {
@@ -1016,6 +1101,55 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
             // they just wait outside until maintenance clears it
             else if (cur.waitT > doorWaitSec && !doorBlocked) { // they let themselves in
                 InviteIn();
+            }
+            break;
+        }
+        case VState::Cower: {
+            cur.animT += dt;
+            if (doorThreat) cur.cowerRising = false;
+            if (cur.cowerT < 0.f) {
+                // still falling back - either to the refuge bench, or done
+                // frozen where they stopped (room had no free seat)
+                if (cur.cowerSeatIdx < 0) { cur.cowerT = 0.f; break; }
+                Vector2 d{cur.cowerStand.x - cur.pos.x, cur.cowerStand.z - cur.pos.z};
+                float dist = std::hypot(d.x, d.y);
+                if (dist < 0.1f) cur.cowerT = 0.f;
+                else {
+                    cur.pos.x += d.x / dist * walkSpeed * 1.3f * dt;
+                    cur.pos.z += d.y / dist * walkSpeed * 1.3f * dt;
+                    cur.yaw = std::atan2(d.x, d.y) * RAD2DEG;
+                    cur.animT += dt * 5.f;
+                }
+            } else if (!doorThreat) {
+                // threat passed - rise off the bench and rejoin the door path
+                cur.cowerRising = true;
+                cur.cowerT = std::max(0.f, cur.cowerT - dt / 0.5f);
+                float k = cur.cowerT;
+                cur.pos.x = cur.cowerStand.x + (cur.cowerSeat.x - cur.cowerStand.x) * k;
+                cur.pos.z = cur.cowerStand.z + (cur.cowerSeat.z - cur.cowerStand.z) * k;
+                if (cur.cowerT <= 0.f) {
+                    cur.cowerT = -1.f; cur.cowerRising = false;
+                    cur.seated = false; cur.cowerSeatIdx = -1;
+                    cur.pos = {cur.cowerStand.x, 0.f, cur.cowerStand.z};
+                    auto& path = office.paths["visitor_to_door"];
+                    int best = 0; float bd = 1e9f;
+                    for (int i = 4; i < (int)path.size(); i++) {   // skip corridor legs behind them
+                        float dx = path[i].x - cur.pos.x, dz = path[i].y - cur.pos.z;
+                        float d = dx * dx + dz * dz;
+                        if (d < bd) { bd = d; best = i; }
+                    }
+                    cur.state = VState::ToDoor; cur.wp = best; cur.waitT = 0;
+                    knocked = false;   // they'll knock again when they get back
+                    TraceLog(LOG_INFO, "[visitor] %s threat passed - rejoining at wp %d",
+                             cur.Name().c_str(), best);
+                }
+            } else if (cur.cowerSeatIdx >= 0) {
+                // lowering onto the bench, then riding the threat out seated
+                cur.cowerT = std::min(1.f, cur.cowerT + dt / 0.5f);
+                float k = cur.cowerT;
+                cur.pos.x = cur.cowerStand.x + (cur.cowerSeat.x - cur.cowerStand.x) * k;
+                cur.pos.z = cur.cowerStand.z + (cur.cowerSeat.z - cur.cowerStand.z) * k;
+                if (k >= 1.f) { cur.yaw = cur.cowerYaw; cur.seated = true; cur.seatH = 0.25f; }
             }
             break;
         }
@@ -1164,12 +1298,22 @@ void VisitorSystem::Update(float dt, float gameHour, Office& office,
             a.path = path;
             a.wp = 0;
             a.walking = true;
-            // pick a non-anomalous persona - generated rosters can flag any slot
+            // pick a non-anomalous persona - generated rosters can flag any
+            // slot. Biased toward the next few book entries: the person whose
+            // appointment is coming up may genuinely already be waiting.
             for (int tries = 0; tries < 8; tries++) {
-                const json& p = data["roster"][RandInt(0, (int)data["roster"].size() - 1)];
-                if (p.contains("always_anomaly")) continue;
-                if (JS(p.value("appearance", json::object()), "eyes", "normal") != "normal") continue;
-                a.app = AppFromJson(p);
+                const json* p = nullptr;
+                if (tries == 0 && scheduleIdx < (int)schedule.size()) {
+                    int lim = std::min(scheduleIdx + 3, (int)schedule.size());
+                    int s = RandInt(scheduleIdx, lim - 1);
+                    const json* cand = RosterFind(JS(schedule[s], "visitor"));
+                    if (cand) p = cand;
+                }
+                if (!p) p = &data["roster"][RandInt(0, (int)data["roster"].size() - 1)];
+                if (p->contains("always_anomaly")) continue;
+                if (JS(p->value("appearance", json::object()), "eyes", "normal") != "normal") continue;
+                a.app = AppFromJson(*p);
+                a.persona = p;           // kept for scheduled-visitor promotion
                 break;
             }
             // jitter the palette a little so the room isn't clones

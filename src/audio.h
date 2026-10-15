@@ -109,7 +109,14 @@ public:
         musicFade = 0.f;
         PlayMusicStream(music);
         SetMusicVolume(music, 0.f);
+        SetMusicPitch(music, musicPitch);   // a death may leave it slowed - restore
         musicOn = true;
+    }
+    // tape-style pitch+speed shift (raylib scales both together). Used to
+    // drag the theme down on the game-over screen without restarting it.
+    void SetMenuMusicPitch(float p) {
+        musicPitch = p;
+        if (ok && musicOn) SetMusicPitch(music, p);
     }
     void UpdateMenuMusic() {
         if (!ok || !musicOn) return;
@@ -146,6 +153,7 @@ private:
     Music music{};
     bool musicOn = false;
     float musicFade = 0.f;
+    float musicPitch = 1.f;
     std::string musicPath;
     std::set<std::string> musicBad;
     bool ok = false;

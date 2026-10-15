@@ -5,6 +5,7 @@
 
 struct HumanoidApp {
     float height = 1.f;
+    float build = 1.f;          // frame width multiplier - seeded 0.92..1.10
     Color skin{200, 170, 145, 255}, shirt{80, 80, 95, 255}, hair{40, 35, 30, 255};
     std::string eyes = "normal";   // "normal" | "black" | "none"
     Color eyeCol{74, 52, 34, 255}; // iris tint used while eyes == "normal"
@@ -30,14 +31,18 @@ HumanoidApp AppFromJson(const json& j);
 // look = world-space point the eyes glance toward (e.g. the player's eye
 // during an interview). Zero vector = eyes face forward. Only "normal" eyes
 // track - black-eyed mutants keep their dead straight-ahead stare.
+// headless = first-person body: no head/neck/face, the camera IS the head.
 void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                   float animT, float armRaise = 0.f, float seatH = 0.5f,
-                  float walkAmt = 0.f, float detain = 0.f, Vector3 look = {});
+                  float walkAmt = 0.f, float detain = 0.f, Vector3 look = {},
+                  bool headless = false);
 // eyes queue up during DrawHumanoid and render here - call after the lit
 // pass (fx.LitOff) so sclera aren't crushed to grey by the office lighting
 void DrawHumanoidEyes();
 
-enum class VState { None, ToDoor, AtDoor, ToChair, Seated, Leaving, Gone };
+// Cower = an arriving visitor saw the thing at the door/window and fell
+// back to a waiting-room bench until it passes. Not a miss, not a leave.
+enum class VState { None, ToDoor, AtDoor, ToChair, Seated, Leaving, Gone, Cower };
 
 struct Visitor {
     const json* person = nullptr;   // roster entry
@@ -63,6 +68,13 @@ struct Visitor {
     int slotIdx = -1;               // schedule slot this visitor came from
     float doorSeenT = 999.f;        // seconds since the office door was last seen open
     bool sawBlockedDoor = false;    // already reacted to the shelf blocking the door
+    // Cower refuge: bench they fell back to. cowerT <0 walking to the stand
+    // spot, [0,1] sit glide (0 standing, 1 seated); cowerRising reverses it.
+    int cowerSeatIdx = -1;
+    Vector3 cowerStand{0, 0, 0}, cowerSeat{0, 0, 0};
+    float cowerYaw = 0.f, cowerT = -1.f;
+    bool cowerRising = false;
+    bool promoted = false;          // was a waiting-room ambient, not a fresh spawn
 
     bool Active() const { return state != VState::None && state != VState::Gone; }
     std::string Name() const { return person ? JS(*person, "name") : std::string("?"); }
@@ -84,6 +96,7 @@ public:
     void InviteIn();
     void EndInterview();
     bool CallNextEarly(Office& office);     // true if the next visitor is now inbound
+    void DebugPromote(Office& office) { SpawnScheduled(office, false); }  // may promote a waiting ambient
     std::string NextName() const;           // "" when the book is empty
     void SecurityRemove();
     void MarkHostileRevealed();
@@ -124,6 +137,7 @@ public:
         bool leaving = false;        // stood up and is exiting via ambient_exit
         bool standing = false;       // mid "stand up" glide back to the stand-spot
         float leaveT = 0.f;          // countdown until they decide to go (set when seated)
+        const json* persona = nullptr; // roster entry - an ambient may be promoted to a scheduled visitor
     };
     std::vector<Ambient> ambient;
     bool waitingEmpty = false;          // exterior anomaly: room cleared
@@ -176,7 +190,8 @@ private:
     Vector3 stallPos{0, 0, 0};
     int stallWp = -1;
     VState stallState = VState::None;
-    void SpawnScheduled(Office& office);
+    void SpawnScheduled(Office& office, bool freshOnly = false);
+    std::function<void(const std::string&)> notifyFn;   // cached from Update
     void InjectLore();              // rare: a lore persona takes a mundane slot
     void WalkAlong(Visitor& v, const std::vector<Vector2>& path, float dt, float speed);
 };

@@ -26,6 +26,15 @@ bool Game::Init() {
     player.pos = sp;
     player.yaw = JF(A.office["player_spawn"], "yaw", 180);
 
+    // the clerk's own body - fixed identity, seen looking down / on title
+    playerApp.height = 1.0f; playerApp.build = 1.02f;
+    playerApp.skin = Color{196, 162, 132, 255};
+    playerApp.shirt = Color{58, 66, 82, 255};    // slate work shirt
+    playerApp.pants = Color{34, 34, 40, 255};
+    playerApp.hair = Color{46, 38, 32, 255};
+    playerApp.hairStyle = 1;                     // buzz - cheap, tidy
+    playerApp.badge = true;
+
     vs.Init(A.visitors, Cfg()["visitor"]);
     ad.Init(A.anomalies, Cfg()["instability"]);
     ad.SetParts(A.anomalyParts);
@@ -432,6 +441,9 @@ void Game::Tut(const char* key, const std::string& msg) {
 
 
 void Game::NewShift(bool fromSave) {
+    // the ORIENTATION: SKIP setting means "my record says 0 but start me at 1"
+    // - bypassed only by an explicit save load, never quietly
+    if (!fromSave && night == 0 && tutorialSkip) night = 1;
     if (!fromSave) {
         gameHour = JF(Cfg()["game"], "shift_start_hour", 18.f);
         if (const char* h = std::getenv("EI_HOUR"))   // dev: jump the shift clock
@@ -605,6 +617,8 @@ void Game::ExecSeq(const std::string& c) {
         }
     } else if (op == "visitor") {
         vs.CallNextEarly(office);
+    } else if (op == "promote") {   // scheduled spawn that MAY match a waiting ambient
+        vs.DebugPromote(office);
     } else if (op == "blinds") {
         office.blindsOpen = !office.blindsOpen;
     } else if (op == "lights") {
@@ -630,6 +644,9 @@ void Game::ExecSeq(const std::string& c) {
         ad.DebugForceOffice(arg.c_str(), office);
     } else if (op == "kind") {
         ad.DebugForceKind(arg.c_str(), office, &vs);
+    } else if (op == "drop") {       // yank a live anomaly by kind (dev)
+        ad.DropKind(arg.c_str());
+        ad.ApplyExteriorFlags(office, vs);
     } else if (op == "call") {
         if (A.anomalies.contains("call_events"))
             ad.DebugCallEvent(A.anomalies["call_events"][0]);
@@ -1539,6 +1556,10 @@ void Game::UpdateCommon(float dt) {
                 audio.Play(AudioBank::Sfx::Heart, 0.9f);
                 TraceLog(LOG_INFO, "[breach] entered via %s - searching, player hidden",
                          breachDoor ? "door" : "window");
+            } else if (VisitorShielded()) {
+                // it took the interviewee and left fed - the line held for you
+                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+                deeds["breach_survived"]++;
             } else {
                 deathTitle = breachDoor ? "IT CAME THROUGH THE DOOR"
                                         : "IT CAME THROUGH THE GLASS";
@@ -1549,8 +1570,13 @@ void Game::UpdateCommon(float dt) {
         breachSearchT -= dt;
         if (!player.hiding) {           // stood up / left cover mid-search
             breachSearchT = 0;
-            deathTitle = "IT FOUND YOU";
-            Jumpscare("breach");
+            if (VisitorShielded()) {    // it grabbed the visitor instead
+                breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
+                deeds["breach_survived"]++;
+            } else {
+                deathTitle = "IT FOUND YOU";
+                Jumpscare("breach");
+            }
         } else if (breachSearchT <= 0) {
             breachCooldown = JF(Cfg()["instability"], "breach_cooldown_sec", 18.f);
             deeds["breach_survived"]++;
@@ -1640,7 +1666,10 @@ void Game::UpdateCommon(float dt) {
         fl -= (ins - 45.f) / 55.f * 0.09f * (0.5f + 0.5f * std::sin((float)GetTime() * 11.f));
     if (lightsOut) {
         float t = (float)GetTime();
-        fl = 0.30f + 0.12f * (0.5f + 0.5f * std::sin(t * 17.f) * std::sin(t * 6.3f));
+        // dead fixtures, not dim ones: the only ceiling glow left is a dying
+        // sputter. The desk lamp, monitor and under-desk bounce (non-flicker)
+        // carry what little visibility remains.
+        fl = 0.02f + 0.05f * (0.5f + 0.5f * std::sin(t * 17.f) * std::sin(t * 6.3f));
         if (Rand01() < dt * 0.3f) audio.Play(AudioBank::Sfx::Buzz, 0.35f);
     } else if (ins > 60.f && blackoutT <= 0.f &&
                Rand01() < dt * 0.03f * ((ins - 60.f) / 40.f)) {
@@ -1649,7 +1678,8 @@ void Game::UpdateCommon(float dt) {
     }
     if (blackoutT > 0.f) blackoutT -= dt;
     fx.flicker = fl * (blackoutT > 0.f ? 0.55f : 1.f);
-    fx.blackout = lightsOut ? 0.12f : (blackoutT > 0.f ? 0.5f : 0.f);
+    fx.blackout = lightsOut ? 0.22f : (blackoutT > 0.f ? 0.5f : 0.f);
+    fx.ambientMul = lightsOut ? 0.22f : 1.f;   // kill the glow floor with the lights
     office.lampDim = fx.flicker;
     fx.waitingDark = office.waitingLightsOut;
 
@@ -1804,6 +1834,38 @@ void Game::DrawDbgNpcs() const {
     }
 }
 
+// the clerk's own body: headless while first-person (the camera is the
+// head), a full seated figure at the desk on the title screen
+void Game::DrawPlayerBody() {
+    float t = (float)GetTime();
+    if (mode == Mode::Title) {
+        // the menu drifts across the office facing the desk - the clerk is
+        // actually there, hunched over the paperwork between shifts
+        DrawHumanoid({office.seatCam.x, 0.f, office.seatCam.z + 0.06f},
+                     180.f, playerApp, true, t * 0.7f, 0.f, 0.5f);
+        return;
+    }
+    if (mode == Mode::Dead || mode == Mode::Win || mode == Mode::Jumpscare) return;
+    bool seated = (mode == Mode::SitVisitor || mode == Mode::SitComputer);
+    if (seated) {
+        // hips just behind the eye point, thighs reaching under the desk
+        DrawHumanoid({office.seatCam.x, 0.f, office.seatCam.z + 0.06f},
+                     180.f, playerApp, true, t * 0.7f, 0.f, 0.5f,
+                     0.f, 0.f, {}, true);
+        return;
+    }
+    bool crouch = player.crouching || player.hiding;
+    // nudge the body forward along the facing so a straight-down look reads
+    // legs and shoes, not an eye-level chest slab
+    float yr = player.yaw * DEG2RAD;
+    Vector3 at{player.pos.x + std::sin(yr) * 0.20f, 0.f,
+               player.pos.z + std::cos(yr) * 0.20f};
+    HumanoidApp fp = playerApp; fp.build = 0.88f;   // narrower chest under the chin
+    DrawHumanoid(at, player.yaw, fp, crouch,
+                 player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
+                 player.moving ? 0.8f : 0.f, 0.f, {}, true);
+}
+
 void Game::DrawWorld() {
     office.clockHour = gameHour;
     if (shake > 0.f) {
@@ -1823,6 +1885,7 @@ void Game::DrawWorld() {
         fx.BeginWorld();              // lighting shader on
         if (!DevEnv("EI_NOITEMS")) office.Draw();
         if (!DevEnv("EI_NOVIS")) vs.Draw();
+        if (!DevEnv("EI_NOBODY")) DrawPlayerBody();
         DrawDbgNpcs();
         DrawCrew();
         fx.LitOff();                  // figures stay unlit silhouettes
@@ -1989,17 +2052,22 @@ void Game::Run() {
 
         switch (mode) {
             case Mode::Title: {
+                // back at the menu the theme unbends - same stream, normal pitch,
+                // position preserved (never restarted by the death screen)
+                audio.SetMenuMusicPitch(1.f);
                 // dev hook: EI_MENU=<tab 0..3> pins the settings page open (shots)
                 if (const char* e = DevEnv("EI_MENU")) {
                     menuPage = 1;
                     settingsTab = std::clamp(atoi(e), 0, 3);
                 }
-                // slow camera drift through the empty office behind the menu
+                // slow drift on the office's front-left arc, looking over the
+                // desk's lamp-side corner at the seated clerk in the chair
                 float t = (float)GetTime();
-                cam.position = {std::sin(t * 0.07f) * 3.1f, 1.55f + std::sin(t * 0.05f) * 0.12f,
-                                1.7f + std::cos(t * 0.055f) * 1.1f};
+                cam.position = {-1.0f + std::sin(t * 0.07f) * 1.5f,
+                                1.62f + std::sin(t * 0.05f) * 0.09f,
+                                1.3f + std::cos(t * 0.055f) * 0.7f};
                 cam.up = {0.f, 1.f, 0.f};
-                cam.target = {0.f, 1.15f, -1.2f};
+                cam.target = {0.f, 1.0f, 2.7f};
                 cam.fovy = fovBase;
                 audio.SetDroneLevel(0.22f);
                 // the night's cast generates while the menu idles (stub makes
@@ -2008,7 +2076,16 @@ void Game::Run() {
                 if (paperReq == -1 && paperRaw.empty()) RequestPaperwork();
                 if (callEvReq == -1 && !callGenDone) RequestCallPersonas();
                 PollLLM();
-                if (menuPage == 1) {
+                if (confirmTut) {
+                    // the tutorial-offer modal owns the keyboard
+                    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_Y)) {
+                        confirmTut = false; NewShift(false);
+                    } else if (IsKeyPressed(KEY_N)) {
+                        confirmTut = false; tutorialSkip = true; night = 1;
+                        nightBeforeEnv = -1; SaveSettings(); NewShift(false);
+                    } else if (IsKeyPressed(KEY_ESCAPE)) confirmTut = false;
+                }
+                else if (menuPage == 1) {
                     // settings page: ESC backs out (or cancels an armed bind/field)
                     if (IsKeyPressed(KEY_ESCAPE)) {
                         if (rebinding >= 0) rebinding = -1;
@@ -2017,7 +2094,10 @@ void Game::Run() {
                     }
                 } else {
                     // ENTER applies the API key while its field has focus instead of starting
-                    if (IsKeyPressed(KEY_ENTER) && !focusApiKey && !editId) NewShift(false);
+                    if (IsKeyPressed(KEY_ENTER) && !focusApiKey && !editId) {
+                        if (night == 0 && !tutorialSkip) confirmTut = true;
+                        else NewShift(false);
+                    }
                     else if (saveExists && IsKeyPressed(KEY_C) && !focusApiKey) { if (Load()) { mode = Mode::Roam; DisableCursor(); Notify("Save loaded."); } }
                     else if (IsKeyPressed(KEY_Q) && !focusApiKey) { quit = true; }
                     else if (IsKeyPressed(KEY_R) && !focusApiKey && night != 1) { night = 1; SaveSettings(); }   // wipe record, or skip training on 0

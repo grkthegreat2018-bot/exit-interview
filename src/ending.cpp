@@ -208,6 +208,27 @@ void Game::ConsumeLethalThreat() {
 }
 
 
+// the thing takes whoever it reaches first. A visitor inside the office is
+// easier prey than a hidden clerk - shielded once, and the anomaly leaves
+// fed. High-risk protection: the interviewee dies, not you.
+bool Game::VisitorShielded() {
+    if (!vs.HasActiveVisitor()) return false;
+    if (vs.Cur().pos.z <= office.doorZ) return false;    // not inside the office
+    std::string n = vs.Cur().Name();
+    if (!vs.Cur().anomaly.empty()) ad.DropId("v_" + vs.Cur().anomaly);
+    vs.CurMut().escorted = true;                          // an exit, not a miss
+    vs.CurMut().lunge = false; vs.CurMut().detained = false;
+    vs.CurMut().seated = false;
+    vs.CurMut().state = VState::Gone;
+    deeds["visitor_taken"]++;
+    Notify("It went for " + n + " instead of you. Then it was gone.");
+    audio.Play(AudioBank::Sfx::Screech, 0.9f);
+    shake = std::max(shake, 0.5f);
+    TraceLog(LOG_WARNING, "[breach] took visitor %s - player shielded", n.c_str());
+    return true;
+}
+
+
 void Game::Jumpscare(const std::string& reason) {
     if (mode == Mode::Jumpscare || mode == Mode::Dead) return;
     if (godMode) {   // EI_GOD: log what would have killed the run and keep going
@@ -224,6 +245,7 @@ void Game::Jumpscare(const std::string& reason) {
     std::string body = JS(A.dialogs["endings"], reason.c_str());
     ending = body.empty() ? JS(A.dialogs["endings"], "jumpscare") : body;
     audio.Play(AudioBank::Sfx::Stinger, 1.f);
+    audio.SetMenuMusicPitch(0.74f);   // the theme sags - same track, slower, lower
 }
 
 

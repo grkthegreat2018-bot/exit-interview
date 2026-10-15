@@ -58,6 +58,7 @@ void Game::LoadSettings() {
     volMusic = std::clamp(j.value("vol_music", 1.f), 0.f, 2.f);
     volDrone = std::clamp(j.value("vol_drone", 1.f), 0.f, 2.f);
     musicEnabled = j.value("music_enabled", true);
+    tutorialSkip = j.value("tutorial_skip", false);
     hardcodedOnly = j.value("hardcoded_anomalies", true);   // LLM anomalies opt-IN, not default
     seenNames = j.value("seen_names", std::vector<std::string>{});
     loreSeen = j.value("lore_seen", std::set<std::string>{});
@@ -91,7 +92,7 @@ void Game::SaveSettings() {
            {"last_eval", lastEval}, {"week_done", weekDone},
            {"vol_master", volMaster}, {"vol_sfx", volSfx}, {"vol_ambience", volAmb},
            {"vol_music", volMusic}, {"vol_drone", volDrone},
-           {"music_enabled", musicEnabled},
+           {"music_enabled", musicEnabled}, {"tutorial_skip", tutorialSkip},
            {"llm_endpoint", llmEndpoint}, {"llm_model", llmModel},
            {"keys", {{"fwd", keys.fwd}, {"back", keys.back}, {"left", keys.left},
                      {"right", keys.right}, {"sprint", keys.sprint}, {"crouch", keys.crouch},

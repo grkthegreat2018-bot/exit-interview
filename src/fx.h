@@ -217,6 +217,8 @@ public:
     float fogDensity = 0.065f;
     Color fogColor{9, 10, 14, 255};
     Color ambient{78, 72, 82, 255};
+    float ambientMul = 1.f;       // drops when the office lights are dead -
+                                // the ambient floor was the "magic glow"
     float noiseAmt = 0.12f;
 
     std::vector<Light> lights;
@@ -311,7 +313,9 @@ public:
             if (dbg < 0) { const char* e = std::getenv("EI_DBG"); dbg = e ? std::atoi(e) : 0; }
             SetShaderValue(light, locDbg, &dbg, SHADER_UNIFORM_INT);
         }
-        float amb[4] = {ambient.r / 255.f, ambient.g / 255.f, ambient.b / 255.f, 1.f};
+        float amb[4] = {ambient.r / 255.f * ambientMul,
+                        ambient.g / 255.f * ambientMul,
+                        ambient.b / 255.f * ambientMul, 1.f};
         SetShaderValue(light, locAmbient, amb, SHADER_UNIFORM_VEC4);
         float fog[3] = {fogColor.r / 255.f, fogColor.g / 255.f, fogColor.b / 255.f};
         SetShaderValue(light, locFogColor, fog, SHADER_UNIFORM_VEC3);

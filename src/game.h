@@ -86,6 +86,8 @@ private:
     bool rlHandled = false;
     bool offlineNotified = false;
     bool hardcodedOnly = true;      // settings: scripted anomalies only (no LLM remix/calls)
+    bool tutorialSkip = false;      // settings: night 0 orientation is optional
+    bool confirmTut = false;        // title modal: "start the training shift?"
 
     // desk-phone anomaly call: an anomaly that phones you, persona-driven
     struct PhoneEvt {
@@ -184,6 +186,9 @@ private:
     static std::string KeyName(int k);   // one buffer per call - safe inside big concat chains
     std::string BindLabel(const char* action, int key);   // "Sit at your desk  [E]"
     bool breachDoor = false;            // the breach rush came through the door
+
+    HumanoidApp playerApp;              // the clerk's own look (FP body + title desk)
+    void DrawPlayerBody();
 
     void Notify(const std::string& s);
     void NewShift(bool fromSave);
@@ -305,6 +310,7 @@ private:
     void Jumpscare(const std::string& reason);
     void Die(const std::string& title, const std::string& body);
     void ConsumeLethalThreat();         // god mode: drop whatever just tried to kill
+    bool VisitorShielded();             // intruder/breach takes an in-office visitor instead
     void Save();
     bool Load();
     void LoadSettings();

@@ -181,10 +181,13 @@ void Game::DrawTitle() {
     // popup is modal so clicks can't pass through the veil)
     const float bw = 380.f, bh = 52.f, gap = 13.f;
     Rectangle r{W / 2.f - bw / 2, H * 0.50f, bw, bh};
-    if (!updOpen) {
+    if (!updOpen && !confirmTut) {
         if (MenuBtn(r, night == 0 ? "BEGIN THE ORIENTATION SHIFT" : "BEGIN THE NIGHT SHIFT",
                    night == 0 ? "A guided first shift - two appointments, hands-on lessons."
-                              : "Clock in at 6:00 PM. Survive until 6:00 AM.")) { NewShift(false); return; }
+                              : "Clock in at 6:00 PM. Survive until 6:00 AM.")) {
+            if (night == 0 && !tutorialSkip) { confirmTut = true; return; }
+            NewShift(false); return;
+        }
         r.y += bh + gap;
         if (saveExists) {
             if (MenuBtn(r, "CONTINUE FROM SAVE", "Resume the shift exactly where you left it.")) {
@@ -247,6 +250,36 @@ void Game::DrawTitle() {
             if (MenuBtn(pr, pill.c_str(), "A new release is out on github - view the changelog."))
                 updOpen = 1;
         }
+    }
+    // modal: first launch offers the guided shift, not an ultimatum
+    if (confirmTut) {
+        DrawRectangle(0, 0, W, H, Color{0, 0, 0, 170});
+        Rectangle card{W / 2.f - 330.f, H / 2.f - 118.f, 660.f, 236.f};
+        DrawRectangleRounded({card.x + 6.f, card.y + 8.f, card.width, card.height},
+                             0.06f, 8, Color{0, 0, 0, 130});
+        DrawRectangleRounded(card, 0.06f, 8, Color{22, 26, 34, 248});
+        DrawRectangleRoundedLinesEx(card, 0.06f, 8, 1.5f, Color{130, 118, 82, 220});
+        DrawTextEx(A.font, "ORIENTATION SHIFT", {card.x + 30.f, card.y + 24.f}, 30, 1,
+                   Color{220, 215, 205, 255});
+        DrawTextEx(A.fontSmall,
+                   "Your record shows no completed shift. Orientation is a guided night:",
+                   {card.x + 32.f, card.y + 66.f}, 20, 1, Color{172, 178, 190, 255});
+        DrawTextEx(A.fontSmall,
+                   "two appointments, hands-on lessons, nothing that can end you.",
+                   {card.x + 32.f, card.y + 92.f}, 20, 1, Color{172, 178, 190, 255});
+        float by = card.y + card.height - 62.f;
+        if (MenuBtn({card.x + 30.f, by, 280.f, 44.f}, "START TRAINING  [Y]",
+                    "Play the guided first shift (recommended).")) {
+            confirmTut = false; NewShift(false); return;
+        }
+        if (MenuBtn({card.x + card.width - 250.f, by, 220.f, 44.f}, "SKIP TO NIGHT 1  [N]",
+                    "Skip orientation permanently - your record moves to Night 1. Re-enable it any time in SETTINGS > GENERAL.")) {
+            confirmTut = false; tutorialSkip = true; night = 1;
+            nightBeforeEnv = -1; SaveSettings();
+            NewShift(false); return;
+        }
+        DrawTextEx(A.fontSmall, "ESC to go back", {card.x + 32.f, card.y + card.height - 18.f},
+                   16, 1, Color{120, 126, 138, 255});
     }
     if (!tip.empty()) DrawTooltipBar(W / 2.f - 300.f, r.y + bh + 18.f, 600.f);
 }
@@ -457,6 +490,11 @@ void Game::DrawSettings() {
         std::string nl = "SHIFT RECORD: NIGHT " + std::to_string(night) + "  (click to reset)";
         if (MenuBtn(r, nl.c_str(), "Reset the night counter and your warning record - back to the training shift.")) {
             night = 0; nightBeforeEnv = -1; seenNames.clear(); lastEval.clear(); SaveSettings();
+        }
+        next();
+        if (MenuBtn(r, tutorialSkip ? "ORIENTATION: SKIP" : "ORIENTATION: PLAY",
+            "OFF shows a prompt before the training shift and you choose. ON skips the guided night entirely - fresh records start straight at Night 1.")) {
+            tutorialSkip = !tutorialSkip; SaveSettings();
         }
         next();
         if (MenuBtn(r, "RESET ALL SETTINGS", "Restore sensitivity, volumes, keybinds and LLM options to defaults.")) {

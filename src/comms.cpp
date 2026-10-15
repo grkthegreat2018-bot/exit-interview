@@ -398,6 +398,10 @@ void Game::OnIntruderStrike() {
         audio.Play(AudioBank::Sfx::Heart, 0.7f);
         return;
     }
+    if (VisitorShielded()) {
+        ad.ClearIntruder(office);          // it took the visitor - satisfied
+        return;
+    }
     Jumpscare("intruder");
 }
 
