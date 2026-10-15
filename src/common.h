@@ -140,8 +140,6 @@ inline const std::map<std::string, std::string> VERIFY_REQ = {
     {"security_called", "dispatch security"},
     {"facilities_called", "dispatch facilities"},
     {"frontdesk_called", "contact the front desk"},
-    {"blinds_used", "use the window blinds"},
-    {"lights_used", "use the light switch"},
     {"visitor_early", "call a visitor in early"},
 };
 

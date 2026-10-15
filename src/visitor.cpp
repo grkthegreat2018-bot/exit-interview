@@ -312,17 +312,17 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
     // skull and its exposed sliver reads as a floating ring halo
     switch (a.hairStyle) {
         case 1:   // buzz: tight to the skull
-            Sph({hb.x, hb.y + 0.042f * a.height, hb.z - f.z * 0.008f}, 0.112f * a.height, a.hair);
+            Sph({hb.x, hb.y + 0.050f * a.height, hb.z - f.z * 0.012f}, 0.112f * a.height, a.hair);
             break;
         case 2:   // long: cap plus a fall of hair down the back
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
             rlNormal3f(-f.x, -0.3f, -f.z);
             DrawCylinderEx({hb.x - f.x * 0.08f * a.height, hb.y + 0.01f, hb.z - f.z * 0.08f * a.height},
                            {hb.x - f.x * 0.10f * a.height, hb.y - 0.20f * a.height, hb.z - f.z * 0.10f * a.height},
                            0.055f * a.height, 0.045f * a.height, 6, a.hair);
             break;
         case 3:   // ponytail: cap, a tied knot, and a short tail
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
             Sph({hb.x - f.x * 0.11f * a.height, hb.y + 0.075f * a.height, hb.z - f.z * 0.11f * a.height},
                 0.045f * a.height, a.hair);
             rlNormal3f(-f.x, -0.4f, -f.z);
@@ -331,7 +331,7 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
                            0.038f * a.height, 0.030f * a.height, 6, a.hair);
             break;
         case 4:   // bun: cap plus a knot at the back of the skull
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+            Sph({hb.x - f.x * 0.032f, hb.y + 0.042f * a.height, hb.z - f.z * 0.032f}, 0.115f * a.height, a.hair);
             Sph({hb.x - f.x * 0.115f * a.height, hb.y + 0.05f * a.height, hb.z - f.z * 0.115f * a.height},
                 0.055f * a.height, a.hair);
             break;
@@ -340,8 +340,10 @@ void DrawHumanoid(Vector3 feet, float yawDeg, const HumanoidApp& a, bool seated,
             break;
         case 6:   // bald: nothing
             break;
-        default:  // cap
-            Sph({hb.x - f.x * 0.02f, hb.y + 0.028f * a.height, hb.z - f.z * 0.02f}, 0.115f * a.height, a.hair);
+        default:  // cap - nudged off-axis so the fringe reads as a side part
+            Sph({hb.x - f.x * 0.030f + r.x * 0.012f * a.height,
+                 hb.y + 0.044f * a.height,
+                 hb.z - f.z * 0.030f + r.z * 0.012f * a.height}, 0.115f * a.height, a.hair);
             break;
     }
     // face - sclera/iris/pupil are queued for the unlit pass (see

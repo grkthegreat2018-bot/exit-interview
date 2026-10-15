@@ -668,6 +668,9 @@ void Game::ExecSeq(const std::string& c) {
         player.crouching = player.forcedCrouch = true;
     } else if (op == "unhide") {
         player.forcedCrouch = player.crouching = player.hiding = false;
+    } else if (op == "crouch") {    // plain crouch, not under the desk
+        player.crouching = !player.crouching;
+        player.hiding = false;
     } else if (op == "hour") {       // hour:<n> jumps the shift clock (18..30)
         gameHour = std::clamp(arg.empty() ? 20.f : (float)atof(arg.c_str()), 18.f, 30.f);
     } else if (op == "night") {      // night:<n> restarts the shift at night n
@@ -1915,35 +1918,46 @@ void Game::DrawPlayerBody() {
                      0.f, 0.f, {}, true);
         return;
     }
-    bool crouch = player.crouching || player.hiding;
+    // hidden under the desk: the tucked body would clip through the desk
+    // underside and fill the whole view - you're curled up, don't draw it
+    if (player.hiding) return;
+    bool crouch = player.crouching;
     // your own chin hides your chest until you actually look down - and the
     // mid-pitch band just shows a shoulder slab, so the body only appears
-    // once the view is steep enough to read chest-front -> legs -> feet
-    if (!crouch && player.pitch > -40.f) return;
+    // once the view is steep enough to read chest-front -> legs -> feet.
+    // same gate while crouched: the tucked body must not fill a forward view
+    if (player.pitch > -40.f) return;
     float yr = player.yaw * DEG2RAD;
     // Minecraft-style: the eye sits at the body's own head (a hair behind
     // the neck axis so the near plane clips the chin/neck, not the chest),
     // so looking down reads MY torso below me -> legs -> feet, not a body
     // standing in front of me
-    float band = crouch ? 1.f : std::clamp((-player.pitch - 40.f) / 16.f, 0.f, 1.f);
-    Vector3 at{player.pos.x + std::sin(yr) * 0.02f, -(1.f - band) * 1.35f,
-               player.pos.z + std::cos(yr) * 0.02f};
+    float band = std::clamp((-player.pitch - 40.f) / 16.f, 0.f, 1.f);
+    // crouched: the tucked body is closer to the lowered eye - push it a
+    // touch further forward so the same read holds at the smaller scale
+    float fwd = crouch ? 0.22f : 0.02f;
+    Vector3 at{player.pos.x + std::sin(yr) * fwd, -(1.f - band) * 1.35f,
+               player.pos.z + std::cos(yr) * fwd};
     // close under the eye + slightly forward: torso fills center frame,
     // legs and feet extend to the bottom edge (Minecraft-style framing)
     HumanoidApp fp = playerApp; fp.build = 0.92f; fp.height = 0.95f;
     // leaning the whole humanoid ~20 deg forward about its hip axis is
     // what sells "looking along my own body": the chest turns to face the
     // downward view and the legs/feet recede past it to the bottom edge
-    // instead of hiding behind the chest-top face
-    rlPushMatrix();
-    float pivY = at.y + 0.95f * fp.height;
-    rlTranslatef(at.x, pivY, at.z);
-    rlRotatef(-20.f, std::cos(yr), 0.f, -std::sin(yr));
-    rlTranslatef(-at.x, -pivY, -at.z);
+    // instead of hiding behind the chest-top face. The crouch pose is
+    // already tucked - the lean would pitch knees into the camera, skip it
+    bool lean = !crouch;
+    if (lean) {
+        rlPushMatrix();
+        float pivY = at.y + 0.95f * fp.height;
+        rlTranslatef(at.x, pivY, at.z);
+        rlRotatef(-20.f, std::cos(yr), 0.f, -std::sin(yr));
+        rlTranslatef(-at.x, -pivY, -at.z);
+    }
     DrawHumanoid(at, player.yaw, fp, crouch,
                  player.moving ? t : t * 0.55f, 0.f, crouch ? 0.30f : 0.5f,
                  player.moving ? 0.8f : 0.f, 0.f, {}, true);
-    rlPopMatrix();
+    if (lean) rlPopMatrix();
 }
 
 void Game::DrawWorld() {
