@@ -2,8 +2,12 @@
 #include "game.h"
 
 int main() {
+    auto tp0 = std::chrono::steady_clock::now();
     SetConfigFlags(FLAG_VSYNC_HINT);
     InitWindow(1600, 900, "EXIT INTERVIEW");
+    TraceLog(LOG_INFO, "[boot] InitWindow %.0f ms",
+             std::chrono::duration<double, std::milli>(
+                 std::chrono::steady_clock::now() - tp0).count());
     // window icon: a lit doorway, an EXIT bar, and somebody standing in it -
     // generated at startup so no asset file is needed
     {
@@ -28,6 +32,9 @@ int main() {
     BeginDrawing();
     ClearBackground(Color{6, 7, 9, 255});
     EndDrawing();
+    TraceLog(LOG_INFO, "[boot] first frame %.0f ms",
+             std::chrono::duration<double, std::milli>(
+                 std::chrono::steady_clock::now() - tp0).count());
 
     Game game;
     if (!game.Init()) {

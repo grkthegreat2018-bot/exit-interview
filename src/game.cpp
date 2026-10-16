@@ -12,6 +12,8 @@ bool Game::Init() {
     // staged boot card: heavy init runs between InitWindow and the first
     // real frame, so keep the window painted and say what it's doing
     auto boot = [](const char* s) {
+        // GetTime counts from InitWindow - the [boot] lines show which stage eats the wait
+        TraceLog(LOG_INFO, "[boot %.2fs] %s", GetTime(), s);
         BeginDrawing();
         ClearBackground(Color{6, 7, 9, 255});
         DrawText("EXIT INTERVIEW", 40, 40, 22, Color{52, 58, 66, 255});
