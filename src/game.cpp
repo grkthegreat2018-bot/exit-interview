@@ -2593,6 +2593,11 @@ void Game::Run() {
         UnloadImage(img);
     }
         EndDrawing();
+        static int bootFrames = 0;                   // [boot] prove the loop is presenting
+        if (bootFrames >= 0 && ++bootFrames >= 3) {
+            TraceLog(LOG_INFO, "[boot %.2fs] render loop alive", GetTime());
+            bootFrames = -1;
+        }
         if (!shotReq.empty()) {                      // seq-driven capture
             Image img = LoadImageFromScreen();
             ExportImage(img, shotReq.c_str());

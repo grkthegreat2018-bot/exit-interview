@@ -8,5 +8,11 @@
       "name": "cpp-httplib",
       "features": ["openssl"]
     }
+  ],
+  "overrides": [
+    {
+      "name": "raylib",
+      "version": "5.5"
+    }
   ]
 }

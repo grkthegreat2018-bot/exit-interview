@@ -21,10 +21,13 @@ int main() {
         UnloadImage(icon);
     }
     // borderless fullscreen: undecorated window sized to the desktop monitor
-    SetWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
-    int mon = GetCurrentMonitor();
-    SetWindowSize(GetMonitorWidth(mon), GetMonitorHeight(mon));
-    SetWindowPosition(0, 0);
+    // (EI_NOBORDER=1 keeps the plain window - display debugging)
+    if (!std::getenv("EI_NOBORDER")) {
+        SetWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
+        int mon = GetCurrentMonitor();
+        SetWindowSize(GetMonitorWidth(mon), GetMonitorHeight(mon));
+        SetWindowPosition(0, 0);
+    }
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
 
