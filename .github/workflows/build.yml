@@ -29,7 +29,8 @@ jobs:
           sudo apt-get install -y \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev \
             libxi-dev libgl1-mesa-dev libglu1-mesa-dev \
-            libxkbcommon-dev libwayland-dev pkg-config
+            libxkbcommon-dev libwayland-dev pkg-config \
+            autoconf autoconf-archive automake libtool
 
       # vcpkg binary cache: ports compile once per manifest/baseline change
       # instead of from source every run

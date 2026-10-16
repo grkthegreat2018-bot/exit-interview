@@ -543,7 +543,12 @@ private:
             json j;
             try { j = json::parse(body); } catch (...) { continue; }
             std::string status = j.value("status", "");
-            if (status != "ahead") { st = State::Idle; return; }  // found our commit
+            if (status != "ahead") {  // found our commit - nothing newer
+                st = State::Idle;
+                TraceLog(LOG_INFO, "[update] up to date (build %s, %s: %s)",
+                         sha.c_str(), br, status.c_str());
+                return;
+            }
             int n = j.value("ahead_by", 0);
             std::string notes;
             if (j.contains("commits")) {
@@ -577,7 +582,10 @@ private:
             TraceLog(LOG_INFO, "[update] main is %d commit(s) ahead of this build", n);
             return;
         }
+        // neither branch compared - most likely this build's commit was never
+        // pushed, so GitHub can't resolve it as a compare base
         st = State::Idle;
+        TraceLog(LOG_INFO, "[update] can't compare build %s against remote (unpushed commit?)", sha.c_str());
     }
 
     void DownloadThread() {
