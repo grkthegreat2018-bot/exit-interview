@@ -25,6 +25,13 @@ target_link_libraries(exit_interview PRIVATE
     OpenSSL::Crypto
 )
 
+# static raylib doesn't always propagate its glfw dependency - link it
+# explicitly or the Linux link dies on glfw* symbols in rcore
+if(UNIX AND NOT APPLE)
+    find_package(glfw3 CONFIG REQUIRED)
+    target_link_libraries(exit_interview PRIVATE glfw)
+endif()
+
 # bake the source commit into the binary - the updater compares it against
 # remote main so dev builds notice new commits even before any release
 # exists. Generated per-build (not per-configure) so rebuilds after a new

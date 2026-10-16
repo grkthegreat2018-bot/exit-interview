@@ -31,11 +31,21 @@ jobs:
             libxi-dev libgl1-mesa-dev libglu1-mesa-dev \
             libxkbcommon-dev libwayland-dev pkg-config
 
+      # vcpkg binary cache: ports compile once per manifest/baseline change
+      # instead of from source every run
+      - uses: actions/cache@v4
+        with:
+          path: vcpkg_cache
+          key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-
+
       - name: "vcpkg (manifest deps - raylib, nlohmann-json, cpp-httplib[openssl])"
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgJsonGlob: 'vcpkg.json'
           appendedCacheKey: ${{ matrix.triplet }}
+          doNotCache: false
+          binaryCachePath: ${{ github.workspace }}/vcpkg_cache
 
       # default generator per platform (VS on Windows, Make on Linux) -
       # toolchain + triplet do the cross-plat work
