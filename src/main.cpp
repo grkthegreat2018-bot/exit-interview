@@ -5,6 +5,9 @@ int main() {
     auto tp0 = std::chrono::steady_clock::now();
     SetConfigFlags(FLAG_VSYNC_HINT);
     InitWindow(1600, 900, "EXIT INTERVIEW");
+    // raylib's RNG is deterministic until seeded - every boot rolling the
+    // same sequence makes music/anomaly/visitor picks identical run to run
+    SetRandomSeed((unsigned)(unsigned long long)std::chrono::system_clock::now().time_since_epoch().count());
     TraceLog(LOG_INFO, "[boot] InitWindow %.0f ms",
              std::chrono::duration<double, std::milli>(
                  std::chrono::steady_clock::now() - tp0).count());

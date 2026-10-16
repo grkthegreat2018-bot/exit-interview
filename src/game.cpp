@@ -2197,9 +2197,12 @@ void Game::Run() {
                     if (fn == "not as it seems.flac" && night < 2) continue;
                     themes.push_back(e.path().string());
                 }
-                std::sort(themes.begin(), themes.end());
+                // shuffle rather than sort: a fresh boot must not always
+                // open on the alphabetically-first track
+                for (int i = (int)themes.size() - 1; i > 0; i--)
+                    std::swap(themes[i], themes[GetRandomValue(0, i)]);
                 themesNight = night;
-                if (!themes.empty()) themeIdx %= (int)themes.size();
+                themeIdx = 0;
                 TraceLog(LOG_INFO, "[music] %d menu tracks in rotation (night %d)",
                          (int)themes.size(), night);
             }
