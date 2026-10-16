@@ -9,11 +9,22 @@
 #include <vector>
 
 bool Game::Init() {
+    // staged boot card: heavy init runs between InitWindow and the first
+    // real frame, so keep the window painted and say what it's doing
+    auto boot = [](const char* s) {
+        BeginDrawing();
+        ClearBackground(Color{6, 7, 9, 255});
+        DrawText("EXIT INTERVIEW", 40, 40, 22, Color{52, 58, 66, 255});
+        DrawText(s, 40, GetScreenHeight() - 56, 18, Color{80, 86, 96, 255});
+        EndDrawing();
+    };
+    boot("loading assets");
     if (!A.Load()) {
         TraceLog(LOG_ERROR, "%s", A.lastError.c_str());
         return false;
     }
     for (auto& w : A.warnings) TraceLog(LOG_WARNING, "assets: %s", w.c_str());
+    boot("building the office");
     office.Load(A.office, Cfg());
     json g = Cfg()["game"];
     sens = JF(g, "mouse_sensitivity", 0.12f);
@@ -41,6 +52,7 @@ bool Game::Init() {
     ad.seenFn = [this](Vector3 p) { return PlayerSees(p); };
     ad.loreSeen = &loreSeen;       // director prefers callers never met
     vs.loreSeen = &loreSeen;       // book injection prefers personas never met
+    boot("synthesizing audio");
     audio.Init();
 
     cam.up = {0.f, 1.f, 0.f};
@@ -54,6 +66,7 @@ bool Game::Init() {
     osTexOk = osTex.id != 0;
     if (osTexOk) SetTextureFilter(osTex.texture, TEXTURE_FILTER_BILINEAR);
 
+    boot("compiling shaders");
     fx.Init(JF(g, "render_scale", 1.25f));
     CollectLights();
 

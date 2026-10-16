@@ -24,6 +24,11 @@ int main() {
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
 
+    // kill the unpainted white window: one black frame before heavy init
+    BeginDrawing();
+    ClearBackground(Color{6, 7, 9, 255});
+    EndDrawing();
+
     Game game;
     if (!game.Init()) {
         // minimal error frame
