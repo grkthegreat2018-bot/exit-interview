@@ -39,6 +39,10 @@ jobs:
           key: vcpkg-${{ matrix.triplet }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: vcpkg-${{ matrix.triplet }}-
 
+      # run-vcpkg errors when binaryCachePath doesn't exist yet (cache miss)
+      - run: mkdir -p vcpkg_cache
+        shell: bash
+
       - name: "vcpkg (manifest deps - raylib, nlohmann-json, cpp-httplib[openssl])"
         uses: lukka/run-vcpkg@v11
         with:
