@@ -1682,17 +1682,37 @@ void Office::DrawItem(const Furni& f) const {
         CBox({0, s.y * 0.72f - 0.014f, s.z / 2 + 0.014f}, {0.26f, 0.010f, 0.004f},
              tint(Color{50, 44, 34, 255}));
     } else if (f.ft == FT::Bin) {
-        DrawCylinderEx({0, 0, 0}, {0, s.y, 0}, s.x / 2, s.x / 2.4f, 10, c);
-        // wire-mesh hint: two thin rim bands hugging the tapered body - the
-        // band radius tracks the body's own taper (r = s.x/2 -> s.x/2.4)
-        Color rb = tint(Color{(unsigned char)(c.r - 20), (unsigned char)(c.g - 20),
-                              (unsigned char)(c.b - 18), 255});
-        auto ring = [&](float t) {
-            float rr = s.x / 2 + (s.x / 2.4f - s.x / 2) * t + 0.004f;
-            DrawCylinderEx({0, s.y * t, 0}, {0, s.y * t + 0.012f, 0}, rr, rr, 10, rb);
+        // wire-mesh office wastebasket: dark hollow shell inside, open rim,
+        // vertical struts + horizontal rings forming the mesh, rolled top
+        // lip and a crumpled sheet caught in the mouth
+        float rBot = s.x / 2.4f, rTop = s.x / 2;
+        Color dk = tint(Color{(unsigned char)(c.r * 0.42f), (unsigned char)(c.g * 0.42f),
+                              (unsigned char)(c.b * 0.45f), 255});
+        Color wire = tint(Color{(unsigned char)(c.r - 14), (unsigned char)(c.g - 14),
+                                (unsigned char)(c.b - 12), 255});
+        DrawCylinderEx({0, 0.015f, 0}, {0, s.y, 0}, rBot * 0.96f, rTop * 0.96f, 10, dk);
+        DrawCylinderEx({0, s.y - 0.05f, 0}, {0, s.y + 0.001f, 0}, rTop * 0.90f,
+                       rTop * 0.90f, 10, tint(Color{16, 16, 18, 255}));   // hollow mouth
+        auto ring = [&](float y, float rr, float th) {
+            DrawCylinderEx({0, y, 0}, {0, y + th, 0}, rr, rr, 10, wire);
         };
-        ring(0.38f);
-        ring(0.72f);
+        auto taper = [&](float t) { return rBot + (rTop - rBot) * t; };
+        ring(0.028f, taper(0.05f) + 0.005f, 0.020f);                       // foot ring
+        ring(s.y * 0.42f, taper(0.42f) + 0.004f, 0.011f);
+        ring(s.y * 0.72f, taper(0.72f) + 0.004f, 0.011f);
+        ring(s.y - 0.010f, rTop + 0.007f, 0.020f);                         // rolled lip
+        for (int i = 0; i < 10; i++) {                                     // mesh struts
+            float a = i * 6.2832f / 10.f;
+            float ca = std::cos(a), sa = std::sin(a);
+            DrawCylinderEx({ca * (rBot + 0.004f), 0.045f, sa * (rBot + 0.004f)},
+                           {ca * (rTop + 0.004f), s.y - 0.012f, sa * (rTop + 0.004f)},
+                           0.0032f, 0.0032f, 5, wire);
+        }
+        // crumpled paper ball peeking over the rim - two off-white lumps
+        Color pp = tint(Color{196, 192, 178, 255});
+        Sph({0.015f, s.y - 0.005f, -0.02f}, 0.042f, pp);
+        Sph({-0.028f, s.y - 0.018f, 0.018f}, 0.034f,
+            tint(Color{172, 168, 152, 255}));
     } else if (f.ft == FT::Switch) {
         // wall plate on a dark frame lip + a rocker paddle that TILTS with
         // the lamp state; a thin red stripe on the paddle's lower half only
