@@ -26,15 +26,18 @@ target_link_libraries(exit_interview PRIVATE
 )
 
 # bake the source commit into the binary - the updater compares it against
-# remote main so dev builds notice new commits even before any release exists
-find_package(Git QUIET)
-set(EI_BUILD_SHA "")
-if(Git_FOUND)
-    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-        OUTPUT_VARIABLE EI_BUILD_SHA OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET)
-endif()
+# remote main so dev builds notice new commits even before any release
+# exists. Generated per-build (not per-configure) so rebuilds after a new
+# commit pick up the new sha without re-running cmake.
+add_custom_target(ei_git_sha ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC=${CMAKE_SOURCE_DIR}
+        -DOUT=${CMAKE_BINARY_DIR}/ei_sha.h
+        -P ${CMAKE_SOURCE_DIR}/cmake/gen_sha.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/ei_sha.h
+    COMMENT "stamping git sha")
+add_dependencies(exit_interview ei_git_sha)
+target_include_directories(exit_interview PRIVATE ${CMAKE_BINARY_DIR})
 
 target_compile_definitions(exit_interview PRIVATE
     _CRT_SECURE_NO_WARNINGS
@@ -43,7 +46,6 @@ target_compile_definitions(exit_interview PRIVATE
     NOUSER
     NOGDI
     CPPHTTPLIB_OPENSSL_SUPPORT
-    EI_BUILD_SHA="${EI_BUILD_SHA}"
 )
 
 if(MSVC)

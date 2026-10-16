@@ -1,6 +1,11 @@
 #pragma once
+#if defined(__has_include)
+#  if __has_include("ei_sha.h")
+#    include "ei_sha.h"     // generated per-build by cmake/gen_sha.cmake
+#  endif
+#endif
 #ifndef EI_BUILD_SHA
-#define EI_BUILD_SHA ""    // baked by CMake; empty for non-git builds
+#define EI_BUILD_SHA ""    // empty for non-git builds
 #endif
 #include "common.h"
 #include <httplib.h>
@@ -437,12 +442,13 @@ private:
                         relSha = rbody.substr(s, e == std::string::npos
                                               ? std::string::npos : e - s);
                     }
-                    // same commit or the build FROM this commit - up to date
+                    // same commit or the build FROM this commit - no nightly
+                    // update, but main may still be ahead: fall to the
+                    // commit-compare check instead of declaring Idle
                     if (relSha.empty() || relSha == sha ||
-                        relSha.find(sha) == 0 || sha.find(relSha) == 0) {
-                        st = State::Idle; return;
-                    }
-                    if (!RemoteAhead(relSha)) { st = State::Idle; return; }
+                        relSha.find(sha) == 0 || sha.find(relSha) == 0)
+                        break;
+                    if (!RemoteAhead(relSha)) break;
                     std::string asset;
 #ifdef _WIN32
                     const char* want = "win64.zip";
